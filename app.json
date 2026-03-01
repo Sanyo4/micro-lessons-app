@@ -21,10 +21,23 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.anonymous.microlessonsapp"
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "scheme": "micro-lessons-app",
+    "plugins": [
+      "expo-router",
+      "expo-sqlite",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Micro Lessons needs microphone access so you can log expenses by voice.",
+          "speechRecognitionPermission": "Micro Lessons needs speech recognition to convert your voice to text."
+        }
+      ]
+    ]
   }
 }
