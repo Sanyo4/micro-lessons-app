@@ -3,9 +3,10 @@ import {
   type CactusLMMessage,
   type CactusLMTool,
 } from 'cactus-react-native';
-import { FUNCTION_DEFINITIONS, USER_FACING_FUNCTIONS } from '../data/functionDefs';
+import { getUserFacingFunctions } from '../data/functionDefs';
 import { executeFunctionCall, type FunctionCallResult } from './functionExecutor';
-import { getBudgetCategories, type BudgetCategory } from './database';
+import { getBudgetCategories, getAppSettings, type BudgetCategory } from './database';
+import { getPlanById } from '../data/plans';
 
 export interface AIResult {
   responseText: string;
@@ -28,6 +29,12 @@ export interface AIResult {
   xpEarned: number;
   navigateTo?: string | null;
 }
+
+const PERSONA_PROMPTS: Record<string, string> = {
+  beginner: 'Communication style: Keep it simple. No financial jargon. Use plain everyday language.',
+  learner: 'Communication style: Explain the why behind financial concepts. Use some terminology but always explain it.',
+  pro: 'Communication style: Use precise financial terminology. Reference ISA rates, APR, compound interest when relevant.',
+};
 
 class GemmaAIService {
   private model: CactusLM | null = null;
@@ -65,10 +72,18 @@ class GemmaAIService {
 
   async processUserInput(userText: string): Promise<AIResult> {
     const budgetState = await getBudgetCategories();
+    const categoryIds = budgetState.map((c) => c.id);
     const budgetContext = this.buildBudgetContext(budgetState);
 
+    // Load persona for system prompt
+    const settings = await getAppSettings();
+    const personaPrompt = PERSONA_PROMPTS[settings?.financial_persona || 'beginner'] || PERSONA_PROMPTS.beginner;
+
+    // Get dynamic function defs based on actual categories
+    const userFunctions = getUserFacingFunctions(categoryIds);
+
     // Convert our function definitions to Cactus Tool format
-    const tools: CactusLMTool[] = USER_FACING_FUNCTIONS.map((fn) => ({
+    const tools: CactusLMTool[] = userFunctions.map((fn) => ({
       name: fn.name,
       description: fn.description,
       parameters: {
@@ -91,6 +106,8 @@ class GemmaAIService {
 When the user reports spending, call log_transaction with the category, amount, and description.
 When the user asks to see their budget, lessons, or challenges, call navigate_to_screen.
 When the user asks about their spending, call check_budget_status or get_spending_summary.
+
+${personaPrompt}
 
 Current budget state:
 ${budgetContext}`,
@@ -244,19 +261,47 @@ ${budgetContext}`,
       }
     }
 
+    // Build keyword map from DB categories + plan categories
+    const categories = await getBudgetCategories();
+    const settings = await getAppSettings();
+    const plan = settings?.selected_plan_id ? getPlanById(settings.selected_plan_id) : null;
+
+    const categoryKeywords: Record<string, string[]> = {};
+    for (const cat of categories) {
+      // Start with category name as keyword
+      categoryKeywords[cat.id] = [cat.name.toLowerCase()];
+    }
+    // Add plan keywords if available
+    if (plan) {
+      for (const planCat of plan.categories) {
+        if (categoryKeywords[planCat.id]) {
+          categoryKeywords[planCat.id] = [...new Set([...categoryKeywords[planCat.id], ...planCat.keywords])];
+        }
+      }
+    }
+
+    // Fallback hardcoded keywords for common categories
+    const fallbackKeywords: Record<string, string[]> = {
+      coffee: ['coffee', 'latte', 'cappuccino', 'espresso', 'flat white', 'mocha', 'cafe', 'starbucks', 'costa'],
+      food: ['food', 'lunch', 'dinner', 'breakfast', 'meal', 'pizza', 'burger', 'sushi', 'groceries', 'pret', 'eat', 'ate'],
+      transport: ['uber', 'taxi', 'bus', 'train', 'transport', 'fare', 'tube', 'metro', 'ride', 'petrol'],
+      entertainment: ['cinema', 'movie', 'game', 'concert', 'show', 'ticket', 'netflix', 'spotify', 'pub', 'bar', 'drinks'],
+      groceries: ['groceries', 'supermarket', 'tesco', 'aldi', 'lidl', 'sainsburys'],
+      dining: ['restaurant', 'dining', 'takeaway', 'nandos'],
+      shopping: ['clothes', 'shoes', 'amazon', 'shopping', 'online'],
+      social: ['pub', 'bar', 'drinks', 'party'],
+    };
+    for (const [id, kws] of Object.entries(fallbackKeywords)) {
+      if (categoryKeywords[id]) {
+        categoryKeywords[id] = [...new Set([...categoryKeywords[id], ...kws])];
+      }
+    }
+
     // Parse spending transactions
     const amountMatch = userText.match(/(\d+(?:\.\d{1,2})?)/);
     const amount = amountMatch ? parseFloat(amountMatch[1]) : null;
 
-    const categoryKeywords: Record<string, string[]> = {
-      coffee: ['coffee', 'latte', 'cappuccino', 'espresso', 'flat white', 'mocha', 'cafe', 'starbucks', 'costa'],
-      food: ['food', 'lunch', 'dinner', 'breakfast', 'meal', 'pizza', 'burger', 'sushi', 'groceries', 'pret', 'eat', 'ate'],
-      transport: ['uber', 'taxi', 'bus', 'train', 'transport', 'fare', 'tube', 'metro', 'ride'],
-      entertainment: ['cinema', 'movie', 'game', 'concert', 'show', 'ticket', 'netflix', 'spotify', 'pub', 'bar', 'drinks'],
-    };
-
     let detectedCategory: string | null = null;
-
     for (const [category, keywords] of Object.entries(categoryKeywords)) {
       if (keywords.some((kw) => lowerText.includes(kw))) {
         detectedCategory = category;

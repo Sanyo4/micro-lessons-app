@@ -1,8 +1,12 @@
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
+import { useCallback } from 'react';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { useFocusEffect, router } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Colors, Spacing, FontSize, BorderRadius } from '../../constants/theme';
+import { announceScreen } from '../../services/audioFeedback';
+import { useAuth } from '../../services/authContext';
+import FloatingVoiceButton from '../../components/FloatingVoiceButton';
 
 const FLOW_STEPS = [
   {
@@ -82,14 +86,46 @@ const PRIVACY_POINTS = [
 ];
 
 export default function HowItWorksScreen() {
+  const { resetApp } = useAuth();
+
+  useFocusEffect(
+    useCallback(() => {
+      announceScreen('How it works', 'A guide to using Micro Lessons');
+    }, [])
+  );
+
+  const handleResetApp = () => {
+    Alert.alert(
+      'Reset App',
+      'This will erase all data and restart setup. Are you sure?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            await resetApp();
+            router.replace('/onboarding/welcome');
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       {/* Header with back */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.navigate('/')} activeOpacity={0.7}>
+        <TouchableOpacity
+          onPress={() => router.navigate('/')}
+          activeOpacity={0.7}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back to home"
+        >
           <Text style={styles.backButton}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>How It Works</Text>
+        <Text style={styles.headerTitle} accessibilityRole="header">How It Works</Text>
         <View style={styles.headerSpacer} />
       </View>
 
@@ -101,25 +137,25 @@ export default function HowItWorksScreen() {
         {/* Section 1: FunctionGemma On-Device AI */}
         <Animated.View entering={FadeInDown.delay(0).duration(400)} style={styles.card}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionIcon}>🧠</Text>
-            <Text style={styles.sectionTitle}>FunctionGemma On-Device AI</Text>
+            <Text style={styles.sectionIcon} importantForAccessibility="no">🧠</Text>
+            <Text style={styles.sectionTitle} accessibilityRole="header">FunctionGemma On-Device AI</Text>
           </View>
           <Text style={styles.sectionBody}>
             All AI processing happens on your device using Google's FunctionGemma (270M-it). No data leaves your phone. No cloud. No bank connections.
           </Text>
           <View style={styles.flowDiagram}>
             <View style={styles.flowNode}>
-              <Text style={styles.flowNodeIcon}>🎙️ ⌨️</Text>
+              <Text style={styles.flowNodeIcon} importantForAccessibility="no">🎙️ ⌨️</Text>
               <Text style={styles.flowNodeLabel}>Voice / Text</Text>
             </View>
             <Text style={styles.flowArrow}>→</Text>
             <View style={styles.flowNode}>
-              <Text style={styles.flowNodeIcon}>🧠</Text>
+              <Text style={styles.flowNodeIcon} importantForAccessibility="no">🧠</Text>
               <Text style={styles.flowNodeLabel}>FunctionGemma</Text>
             </View>
             <Text style={styles.flowArrow}>→</Text>
             <View style={styles.flowNode}>
-              <Text style={styles.flowNodeIcon}>⚡</Text>
+              <Text style={styles.flowNodeIcon} importantForAccessibility="no">⚡</Text>
               <Text style={styles.flowNodeLabel}>Action</Text>
             </View>
           </View>
@@ -128,15 +164,15 @@ export default function HowItWorksScreen() {
         {/* Section 2: Voice & Text Input */}
         <Animated.View entering={FadeInDown.delay(80).duration(400)} style={styles.card}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionIcon}>🎙️</Text>
-            <Text style={styles.sectionTitle}>Voice & Text Input</Text>
+            <Text style={styles.sectionIcon} importantForAccessibility="no">🎙️</Text>
+            <Text style={styles.sectionTitle} accessibilityRole="header">Voice & Text Input</Text>
           </View>
           <Text style={styles.sectionBody}>
             Switch between voice and text input using the toggle on the home screen. Voice-first design makes logging expenses as easy as talking.
           </Text>
           {INPUT_MODES.map((mode) => (
             <View key={mode.title} style={styles.featureRow}>
-              <Text style={styles.featureIcon}>{mode.icon}</Text>
+              <Text style={styles.featureIcon} importantForAccessibility="no">{mode.icon}</Text>
               <View style={styles.modeContent}>
                 <Text style={styles.modeTitle}>{mode.title}</Text>
                 <Text style={styles.featureText}>{mode.text}</Text>
@@ -148,8 +184,8 @@ export default function HowItWorksScreen() {
         {/* Section 3: How It Works */}
         <Animated.View entering={FadeInDown.delay(160).duration(400)} style={styles.card}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionIcon}>⚙️</Text>
-            <Text style={styles.sectionTitle}>How It Works</Text>
+            <Text style={styles.sectionIcon} importantForAccessibility="no">⚙️</Text>
+            <Text style={styles.sectionTitle} accessibilityRole="header">How It Works</Text>
           </View>
           {FLOW_STEPS.map((step) => (
             <View key={step.number} style={styles.stepRow}>
@@ -167,8 +203,8 @@ export default function HowItWorksScreen() {
         {/* Section 4: Contextual Micro-Lessons */}
         <Animated.View entering={FadeInDown.delay(240).duration(400)} style={styles.card}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionIcon}>📖</Text>
-            <Text style={styles.sectionTitle}>Contextual Micro-Lessons</Text>
+            <Text style={styles.sectionIcon} importantForAccessibility="no">📖</Text>
+            <Text style={styles.sectionTitle} accessibilityRole="header">Contextual Micro-Lessons</Text>
           </View>
           <Text style={styles.sectionBody}>
             Lessons appear when they matter most — not randomly. Each trigger type teaches you something different and offers a challenge to build better habits.
@@ -176,7 +212,7 @@ export default function HowItWorksScreen() {
           {TRIGGER_EXAMPLES.map((example) => (
             <View key={example.trigger} style={styles.triggerCard}>
               <View style={styles.triggerHeader}>
-                <Text style={styles.triggerIcon}>{example.icon}</Text>
+                <Text style={styles.triggerIcon} importantForAccessibility="no">{example.icon}</Text>
                 <Text style={styles.triggerLabel}>{example.trigger}</Text>
               </View>
               <View style={styles.triggerFlow}>
@@ -202,15 +238,15 @@ export default function HowItWorksScreen() {
         {/* Section 5: Proactive Coaching */}
         <Animated.View entering={FadeInDown.delay(320).duration(400)} style={styles.card}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionIcon}>🎯</Text>
-            <Text style={styles.sectionTitle}>Proactive Coaching</Text>
+            <Text style={styles.sectionIcon} importantForAccessibility="no">🎯</Text>
+            <Text style={styles.sectionTitle} accessibilityRole="header">Proactive Coaching</Text>
           </View>
           <Text style={styles.sectionBody}>
             The system doesn't wait for you to ask — it coaches you proactively based on your spending patterns and timing.
           </Text>
           {COACHING_FEATURES.map((feature, index) => (
             <View key={index} style={styles.featureRow}>
-              <Text style={styles.featureIcon}>{feature.icon}</Text>
+              <Text style={styles.featureIcon} importantForAccessibility="no">{feature.icon}</Text>
               <Text style={styles.featureText}>{feature.text}</Text>
             </View>
           ))}
@@ -219,17 +255,38 @@ export default function HowItWorksScreen() {
         {/* Section 6: Privacy by Design */}
         <Animated.View entering={FadeInDown.delay(400).duration(400)} style={styles.card}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionIcon}>🔒</Text>
-            <Text style={styles.sectionTitle}>Privacy by Design</Text>
+            <Text style={styles.sectionIcon} importantForAccessibility="no">🔒</Text>
+            <Text style={styles.sectionTitle} accessibilityRole="header">Privacy by Design</Text>
           </View>
           {PRIVACY_POINTS.map((point, index) => (
             <View key={index} style={styles.featureRow}>
-              <Text style={styles.featureIcon}>{point.icon}</Text>
+              <Text style={styles.featureIcon} importantForAccessibility="no">{point.icon}</Text>
               <Text style={styles.featureText}>{point.text}</Text>
             </View>
           ))}
         </Animated.View>
+
+        {/* Reset App */}
+        <Animated.View entering={FadeInDown.delay(480).duration(400)} style={styles.card}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionIcon} importantForAccessibility="no">🔄</Text>
+            <Text style={styles.sectionTitle} accessibilityRole="header">Reset App</Text>
+          </View>
+          <Text style={styles.sectionBody}>
+            Start fresh — this will erase all your data, budget categories, and transaction history, then restart the onboarding setup.
+          </Text>
+          <TouchableOpacity
+            onPress={handleResetApp}
+            style={styles.resetButton}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Reset app — erase all data and restart setup"
+          >
+            <Text style={styles.resetButtonText}>Reset App</Text>
+          </TouchableOpacity>
+        </Animated.View>
       </ScrollView>
+      <FloatingVoiceButton />
     </SafeAreaView>
   );
 }
@@ -268,7 +325,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.lg,
-    paddingBottom: Spacing.xxxl,
+    paddingBottom: 80,
     gap: Spacing.lg,
   },
   card: {
@@ -390,7 +447,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   triggerStepLabel: {
-    fontSize: 10,
+    fontSize: FontSize.xs,
     color: Colors.textMuted,
     fontWeight: '500',
     marginBottom: 2,
@@ -432,5 +489,17 @@ const styles = StyleSheet.create({
     fontSize: FontSize.sm,
     color: Colors.textSecondary,
     lineHeight: 20,
+  },
+  resetButton: {
+    backgroundColor: Colors.danger,
+    borderRadius: BorderRadius.md,
+    paddingVertical: Spacing.md,
+    alignItems: 'center',
+    marginTop: Spacing.sm,
+  },
+  resetButtonText: {
+    fontSize: FontSize.body,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 });

@@ -6,6 +6,8 @@ import Animated, { FadeIn } from 'react-native-reanimated';
 import { getCompletedLessons, type CompletedLesson } from '../../services/database';
 import { MICRO_LESSONS, getLessonById } from '../../data/lessons';
 import { Colors, Spacing, FontSize, BorderRadius } from '../../constants/theme';
+import { announceScreen } from '../../services/audioFeedback';
+import FloatingVoiceButton from '../../components/FloatingVoiceButton';
 
 export default function LessonsScreen() {
   const [completedLessonRecords, setCompletedLessonRecords] = useState<CompletedLesson[]>([]);
@@ -13,6 +15,7 @@ export default function LessonsScreen() {
   const loadLessons = useCallback(async () => {
     const records = await getCompletedLessons();
     setCompletedLessonRecords(records);
+    announceScreen('Lessons', `${records.length} of ${MICRO_LESSONS.length} unlocked`);
   }, []);
 
   useFocusEffect(
@@ -39,10 +42,16 @@ export default function LessonsScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       {/* Header with back */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.navigate('/')} activeOpacity={0.7}>
+        <TouchableOpacity
+          onPress={() => router.navigate('/')}
+          activeOpacity={0.7}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back to home"
+        >
           <Text style={styles.backButton}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Lessons</Text>
+        <Text style={styles.headerTitle} accessibilityRole="header">Lessons</Text>
         <View style={styles.headerSpacer} />
       </View>
 
@@ -54,7 +63,12 @@ export default function LessonsScreen() {
         {/* Progress Card */}
         <View style={styles.progressCard}>
           <Text style={styles.progressTitle}>{unlockedLessons.length} of {MICRO_LESSONS.length} Unlocked</Text>
-          <View style={styles.progressBar}>
+          <View
+            style={styles.progressBar}
+            accessible={true}
+            accessibilityRole="progressbar"
+            accessibilityValue={{ min: 0, max: MICRO_LESSONS.length, now: unlockedLessons.length }}
+          >
             <View style={[styles.progressFill, { width: `${(unlockedLessons.length / MICRO_LESSONS.length) * 100}%` }]} />
           </View>
         </View>
@@ -62,13 +76,13 @@ export default function LessonsScreen() {
         {/* Locked Lessons */}
         {lockedLessons.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>
+            <Text style={styles.sectionTitle} accessibilityRole="header">
               Locked ({lockedLessons.length})
             </Text>
             <View style={styles.lessonList}>
               {lockedLessons.map((lesson) => (
                 <View key={lesson.id} style={styles.lockedCard}>
-                  <Text style={styles.lockedIcon}>🔒</Text>
+                  <Text style={styles.lockedIcon} importantForAccessibility="no">🔒</Text>
                   <View style={styles.lockedText}>
                     <Text style={styles.lockedTitle}>{lesson.title}</Text>
                     <Text style={styles.lockedHint}>
@@ -94,12 +108,12 @@ export default function LessonsScreen() {
 
         {/* Completed / Unlocked Lessons */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>
+          <Text style={styles.sectionTitle} accessibilityRole="header">
             Unlocked ({unlockedLessons.length}/{MICRO_LESSONS.length})
           </Text>
           {unlockedLessons.length === 0 ? (
             <View style={styles.emptyCard}>
-              <Text style={styles.emptyIcon}>📚</Text>
+              <Text style={styles.emptyIcon} importantForAccessibility="no">📚</Text>
               <Text style={styles.emptyTitle}>No lessons yet</Text>
               <Text style={styles.emptyText}>
                 Keep logging your spending to unlock contextual lessons!
@@ -118,7 +132,7 @@ export default function LessonsScreen() {
                     style={styles.lessonCard}
                   >
                     <View style={styles.lessonHeader}>
-                      <Text style={styles.lessonIcon}>
+                      <Text style={styles.lessonIcon} importantForAccessibility="no">
                         {getTriggerIcon(lesson.triggerType)}
                       </Text>
                       <View style={styles.lessonHeaderText}>
@@ -146,6 +160,7 @@ export default function LessonsScreen() {
           )}
         </View>
       </ScrollView>
+      <FloatingVoiceButton />
     </SafeAreaView>
   );
 }
@@ -184,7 +199,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.lg,
-    paddingBottom: Spacing.xxxl,
+    paddingBottom: 80,
   },
   section: {
     marginBottom: Spacing.xxl,

@@ -15,6 +15,9 @@ export default function XPPopup({ amount, visible }: XPPopupProps) {
       entering={FadeInUp.duration(400).springify()}
       exiting={FadeOut.duration(300)}
       style={styles.container}
+      accessibilityLiveRegion="assertive"
+      accessibilityRole="alert"
+      accessibilityLabel={`Earned ${amount} experience points`}
     >
       <Animated.Text style={styles.text}>+{amount} XP</Animated.Text>
     </Animated.View>

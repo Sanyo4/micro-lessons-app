@@ -1,10 +1,40 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Slot } from 'expo-router';
+import { Slot, router, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { View, Text, StyleSheet } from 'react-native';
 import { getDatabase } from '../services/database';
 import { seedDatabase } from '../data/seed';
+import { AuthProvider, useAuth } from '../services/authContext';
 import { Colors, FontSize } from '../constants/theme';
+import { initAccessibilityListener } from '../utils/accessibility';
+
+function AuthGate() {
+  const { isAuthenticated, isNewUser, isOnboarded, isLoading } = useAuth();
+  const segments = useSegments();
+
+  useEffect(() => {
+    if (isLoading) return;
+
+    const inOnboarding = segments[0] === 'onboarding';
+    const inLogin = segments[0] === 'login';
+
+    if (isNewUser || !isOnboarded) {
+      if (!inOnboarding) {
+        router.replace('/onboarding/welcome');
+      }
+    } else if (!isAuthenticated) {
+      if (!inLogin) {
+        router.replace('/login');
+      }
+    } else {
+      if (inOnboarding || inLogin) {
+        router.replace('/(tabs)/');
+      }
+    }
+  }, [isAuthenticated, isNewUser, isOnboarded, isLoading, segments]);
+
+  return <Slot />;
+}
 
 export default function RootLayout() {
   const [isReady, setIsReady] = useState(false);
@@ -25,6 +55,11 @@ export default function RootLayout() {
     initApp();
   }, [initApp]);
 
+  useEffect(() => {
+    const cleanup = initAccessibilityListener();
+    return cleanup;
+  }, []);
+
   if (error) {
     return (
       <View style={styles.center}>
@@ -42,10 +77,10 @@ export default function RootLayout() {
   }
 
   return (
-    <>
+    <AuthProvider>
       <StatusBar style="dark" />
-      <Slot />
-    </>
+      <AuthGate />
+    </AuthProvider>
   );
 }
 

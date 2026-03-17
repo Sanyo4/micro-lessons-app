@@ -139,13 +139,27 @@ export default function VoiceInput({ onTranscript, isProcessing }: VoiceInputPro
             isProcessing && styles.micButtonDisabled,
           ]}
           onPress={handlePress}
+          accessibilityRole="button"
+          accessibilityLabel={
+            isProcessing
+              ? 'Processing'
+              : recognizing
+                ? 'Stop recording'
+                : 'Start voice input'
+          }
+          accessibilityState={{ disabled: isProcessing, busy: isProcessing }}
         >
-          <Text style={styles.micIcon}>{recognizing ? '⏹️' : '🎙️'}</Text>
+          <Text style={styles.micIcon} importantForAccessibility="no">
+            {recognizing ? '⏹️' : '🎙️'}
+          </Text>
         </Pressable>
       </View>
 
       {/* Transcript or hint */}
-      <Text style={styles.transcript}>
+      <Text
+        style={styles.transcript}
+        accessibilityLiveRegion="polite"
+      >
         {isProcessing
           ? 'Processing...'
           : transcript

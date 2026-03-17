@@ -41,12 +41,17 @@ export default function ChatInput({ onSend, isProcessing, embedded, prominent }:
           onSubmitEditing={handleSend}
           returnKeyType="send"
           editable={!isProcessing}
+          accessibilityLabel="Expense input"
+          accessibilityHint="Type what you spent, for example 5 pounds on coffee"
         />
         <TouchableOpacity
           style={[styles.sendButton, (!text.trim() || isProcessing) && styles.sendButtonDisabled]}
           onPress={handleSend}
           disabled={!text.trim() || isProcessing}
           activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Send expense"
+          accessibilityState={{ disabled: !text.trim() || isProcessing, busy: isProcessing }}
         >
           {isProcessing ? (
             <ActivityIndicator size="small" color="#FFFFFF" />
@@ -78,7 +83,7 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    height: 44,
+    height: 48,
     backgroundColor: Colors.background,
     borderRadius: BorderRadius.xl,
     paddingHorizontal: Spacing.lg,
@@ -88,9 +93,9 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   sendButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: Colors.primary,
     justifyContent: 'center',
     alignItems: 'center',

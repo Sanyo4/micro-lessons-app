@@ -1,6 +1,8 @@
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import Animated, { useAnimatedStyle, withTiming } from 'react-native-reanimated';
 import { Colors, Spacing, FontSize, BorderRadius, CategoryColors } from '../constants/theme';
+import { getBudgetState, BUDGET_STATE_CONFIG } from '../utils/budgetState';
+import { playFullBudgetFeedback } from '../services/audioFeedback';
 
 interface BudgetCardProps {
   id: string;
@@ -12,6 +14,7 @@ interface BudgetCardProps {
 
 export default function BudgetCard({ id, name, icon, spent, limit }: BudgetCardProps) {
   const percentage = Math.min((spent / limit) * 100, 100);
+  const pctRounded = Math.round(percentage);
   const exceeded = spent > limit;
   const nearLimit = spent > limit * 0.8;
 
@@ -27,16 +30,32 @@ export default function BudgetCard({ id, name, icon, spent, limit }: BudgetCardP
     width: withTiming(`${percentage}%`, { duration: 600 }),
   }));
 
+  const budgetState = getBudgetState(spent, limit);
+  const stateConfig = BUDGET_STATE_CONFIG[budgetState];
+  const cardLabel = `${name} budget: ${stateConfig.emotion}. £${spent.toFixed(0)} of £${limit.toFixed(0)}, ${pctRounded} percent used`;
+
   return (
-    <View style={styles.card}>
+    <Pressable
+      style={styles.card}
+      onPress={() => playFullBudgetFeedback(budgetState, spent, limit)}
+      accessible={true}
+      accessibilityRole="button"
+      accessibilityLabel={cardLabel}
+      accessibilityHint="Double tap to hear budget status"
+    >
       <View style={styles.header}>
         <View style={[styles.iconContainer, { backgroundColor: categoryColor.bg }]}>
-          <Text style={styles.icon}>{icon}</Text>
+          <Text style={styles.icon} importantForAccessibility="no">{icon}</Text>
         </View>
         <Text style={styles.name}>{name}</Text>
       </View>
       <View style={styles.progressContainer}>
-        <View style={styles.progressBar}>
+        <View
+          style={styles.progressBar}
+          accessible={true}
+          accessibilityRole="progressbar"
+          accessibilityValue={{ min: 0, max: 100, now: pctRounded }}
+        >
           <Animated.View
             style={[styles.progressFill, { backgroundColor: barColor }, animatedWidth]}
           />
@@ -44,9 +63,9 @@ export default function BudgetCard({ id, name, icon, spent, limit }: BudgetCardP
       </View>
       <Text style={[styles.amount, exceeded && styles.amountExceeded]}>
         £{spent.toFixed(0)} / £{limit.toFixed(0)}
-        {exceeded && ' ⚠️'}
+        {exceeded && <Text importantForAccessibility="no"> ⚠️</Text>}
       </Text>
-    </View>
+    </Pressable>
   );
 }
 

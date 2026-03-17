@@ -1,4 +1,5 @@
-import { View, Text, TouchableOpacity, StyleSheet, Modal } from 'react-native';
+import { useRef, useEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Modal, AccessibilityInfo, findNodeHandle } from 'react-native';
 import Animated, { SlideInDown } from 'react-native-reanimated';
 import { Colors, Spacing, FontSize, BorderRadius } from '../constants/theme';
 
@@ -31,6 +32,17 @@ export default function MicroLessonModal({
   onAcceptChallenge,
   onDismiss,
 }: MicroLessonModalProps) {
+  const titleRef = useRef<Text>(null);
+
+  useEffect(() => {
+    if (visible && lesson && titleRef.current) {
+      const node = findNodeHandle(titleRef.current);
+      if (node) {
+        setTimeout(() => AccessibilityInfo.setAccessibilityFocus(node), 300);
+      }
+    }
+  }, [visible, lesson]);
+
   if (!lesson) return null;
 
   const triggerIcon =
@@ -55,8 +67,14 @@ export default function MicroLessonModal({
           {/* Header */}
           <View style={styles.handle} />
           <View style={styles.lessonHeader}>
-            <Text style={styles.triggerIcon}>{triggerIcon}</Text>
-            <Text style={styles.lessonTitle}>{lesson.title}</Text>
+            <Text style={styles.triggerIcon} importantForAccessibility="no">{triggerIcon}</Text>
+            <Text
+              ref={titleRef}
+              style={styles.lessonTitle}
+              accessibilityRole="header"
+            >
+              {lesson.title}
+            </Text>
           </View>
 
           {/* Body */}
@@ -71,7 +89,7 @@ export default function MicroLessonModal({
           {/* Challenge */}
           <View style={styles.challengeCard}>
             <View style={styles.challengeHeader}>
-              <Text style={styles.challengeIcon}>🏆</Text>
+              <Text style={styles.challengeIcon} importantForAccessibility="no">🏆</Text>
               <Text style={styles.challengeTitle}>Challenge</Text>
               <View style={styles.xpBadge}>
                 <Text style={styles.xpBadgeText}>
@@ -94,6 +112,8 @@ export default function MicroLessonModal({
               style={styles.acceptButton}
               onPress={onAcceptChallenge}
               activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={`Take the challenge: ${lesson.challengeTemplate.title}, ${lesson.challengeTemplate.duration_days} days for ${lesson.challengeTemplate.xp_reward} experience points`}
             >
               <Text style={styles.acceptButtonText}>Take the Challenge</Text>
             </TouchableOpacity>
@@ -101,6 +121,8 @@ export default function MicroLessonModal({
               style={styles.dismissButton}
               onPress={onDismiss}
               activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss lesson"
             >
               <Text style={styles.dismissButtonText}>Maybe Later</Text>
             </TouchableOpacity>

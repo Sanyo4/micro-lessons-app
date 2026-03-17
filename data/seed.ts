@@ -1,16 +1,30 @@
 import * as SQLite from 'expo-sqlite';
 
 export async function seedDatabase(database: SQLite.SQLiteDatabase): Promise<void> {
-  // Check if already seeded
+  // Check if onboarding is completed — if so, no seeding needed
+  try {
+    const settings = await database.getFirstAsync<{ onboarding_completed: number }>(
+      'SELECT onboarding_completed FROM app_settings WHERE id = 1'
+    );
+    if (settings?.onboarding_completed === 1) return;
+  } catch (_) {
+    // app_settings table may not exist yet on first run — that's fine
+  }
+
+  // Check if user_profile exists — if not, this is a new install (onboarding handles it)
   const existing = await database.getFirstAsync<{ count: number }>(
     'SELECT COUNT(*) as count FROM user_profile'
   );
-  if (existing && existing.count > 0) return;
+  if (!existing || existing.count === 0) return;
 
+  // Legacy path: user_profile exists but no app_settings — backward compat only
+  const hasBudget = await database.getFirstAsync<{ count: number }>(
+    'SELECT COUNT(*) as count FROM budget_categories'
+  );
+  if (hasBudget && hasBudget.count > 0) return;
+
+  // Seed legacy data if somehow we have a user but no categories
   await database.execAsync(`
-    INSERT INTO user_profile (name, xp, level, streak_days)
-    VALUES ('Sanay', 45, 1, 3);
-
     INSERT INTO budget_categories (id, name, weekly_limit, spent, icon, color)
     VALUES
       ('coffee', 'Coffee', 20.0, 17.0, '☕', '#92400E'),

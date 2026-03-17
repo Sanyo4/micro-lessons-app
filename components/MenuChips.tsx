@@ -18,8 +18,11 @@ export default function MenuChips() {
           style={styles.chip}
           onPress={() => router.navigate(item.route)}
           activeOpacity={0.7}
+          accessibilityRole="link"
+          accessibilityLabel={`Go to ${item.label}`}
+          accessibilityHint={`Navigates to the ${item.label} screen`}
         >
-          <Text style={styles.icon}>{item.icon}</Text>
+          <Text style={styles.icon} importantForAccessibility="no">{item.icon}</Text>
           <Text style={styles.label}>{item.label}</Text>
         </TouchableOpacity>
       ))}
@@ -44,6 +47,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm,
     gap: Spacing.xs,
+    minHeight: 48,
   },
   icon: {
     fontSize: 14,

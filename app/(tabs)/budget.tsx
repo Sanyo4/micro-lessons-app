@@ -7,6 +7,9 @@ import BudgetPlanCard from '../../components/BudgetPlanCard';
 import { getBudgetCategories, updateCategoryLimit, type BudgetCategory } from '../../services/database';
 import { generateBudgetPlan, type BudgetSuggestion } from '../../services/budgetPlanner';
 import { Colors, Spacing, FontSize, BorderRadius, CategoryIcons } from '../../constants/theme';
+import { announceScreen, playFullBudgetFeedback } from '../../services/audioFeedback';
+import { getBudgetState } from '../../utils/budgetState';
+import FloatingVoiceButton from '../../components/FloatingVoiceButton';
 
 export default function BudgetScreen() {
   const [categories, setCategories] = useState<BudgetCategory[]>([]);
@@ -16,7 +19,17 @@ export default function BudgetScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      getBudgetCategories().then(setCategories);
+      getBudgetCategories().then((cats) => {
+        setCategories(cats);
+        const spent = cats.reduce((sum, c) => sum + c.spent, 0);
+        const limit = cats.reduce((sum, c) => sum + c.weekly_limit, 0);
+        const pct = limit > 0 ? Math.round((spent / limit) * 100) : 0;
+        announceScreen('Budget overview', `£${spent.toFixed(0)} of £${limit.toFixed(0)} spent, ${pct} percent used`);
+        setTimeout(() => {
+          const state = getBudgetState(spent, limit);
+          playFullBudgetFeedback(state, spent, limit);
+        }, 2500);
+      });
     }, [])
   );
 
@@ -60,10 +73,16 @@ export default function BudgetScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       {/* Header with back */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.navigate('/')} activeOpacity={0.7}>
+        <TouchableOpacity
+          onPress={() => router.navigate('/')}
+          activeOpacity={0.7}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back to home"
+        >
           <Text style={styles.backButton}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>My Budget</Text>
+        <Text style={styles.headerTitle} accessibilityRole="header">My Budget</Text>
         <View style={styles.headerSpacer} />
       </View>
 
@@ -77,7 +96,12 @@ export default function BudgetScreen() {
           <Text style={[styles.summaryAmount, totalSpent > totalLimit && styles.summaryExceeded]}>
             £{totalSpent.toFixed(0)} / £{totalLimit.toFixed(0)}
           </Text>
-          <View style={styles.summaryBar}>
+          <View
+            style={styles.summaryBar}
+            accessible={true}
+            accessibilityRole="progressbar"
+            accessibilityValue={{ min: 0, max: 100, now: Math.min(Math.round((totalSpent / totalLimit) * 100), 100) }}
+          >
             <View
               style={[
                 styles.summaryBarFill,
@@ -118,7 +142,7 @@ export default function BudgetScreen() {
 
         {showPlan && planSuggestions.length > 0 && (
           <View style={styles.planSection}>
-            <Text style={styles.planTitle}>Budget Suggestions</Text>
+            <Text style={styles.planTitle} accessibilityRole="header">Budget Suggestions</Text>
             {planSuggestions.map((suggestion) => (
               <BudgetPlanCard
                 key={suggestion.categoryId}
@@ -138,6 +162,7 @@ export default function BudgetScreen() {
           </View>
         )}
       </ScrollView>
+      <FloatingVoiceButton />
     </SafeAreaView>
   );
 }
@@ -176,7 +201,7 @@ const styles = StyleSheet.create({
   content: {
     padding: Spacing.lg,
     gap: Spacing.lg,
-    paddingBottom: Spacing.xxxl,
+    paddingBottom: 80,
   },
   summaryCard: {
     backgroundColor: Colors.surfaceSolid,

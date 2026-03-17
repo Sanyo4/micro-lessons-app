@@ -45,7 +45,7 @@ export default function ModeToggle({ mode, onModeChange }: ModeToggleProps) {
   };
 
   return (
-    <View style={styles.container} onLayout={onLayout}>
+    <View style={styles.container} onLayout={onLayout} accessibilityRole="tabbar">
       {/* Sliding pill indicator */}
       {containerWidth > 0 && (
         <Animated.View style={[styles.pill, pillStyle]} />
@@ -55,8 +55,11 @@ export default function ModeToggle({ mode, onModeChange }: ModeToggleProps) {
       <Pressable
         style={styles.option}
         onPress={() => onModeChange('voice')}
+        accessibilityRole="tab"
+        accessibilityLabel="Voice input mode"
+        accessibilityState={{ selected: mode === 'voice' }}
       >
-        <Text style={[styles.icon, mode === 'voice' && styles.activeText]}>
+        <Text style={[styles.icon, mode === 'voice' && styles.activeText]} importantForAccessibility="no">
           🎙️
         </Text>
         <Text style={[styles.label, mode === 'voice' && styles.activeText]}>
@@ -68,8 +71,11 @@ export default function ModeToggle({ mode, onModeChange }: ModeToggleProps) {
       <Pressable
         style={styles.option}
         onPress={() => onModeChange('text')}
+        accessibilityRole="tab"
+        accessibilityLabel="Text input mode"
+        accessibilityState={{ selected: mode === 'text' }}
       >
-        <Text style={[styles.icon, mode === 'text' && styles.activeText]}>
+        <Text style={[styles.icon, mode === 'text' && styles.activeText]} importantForAccessibility="no">
           ⌨️
         </Text>
         <Text style={[styles.label, mode === 'text' && styles.activeText]}>

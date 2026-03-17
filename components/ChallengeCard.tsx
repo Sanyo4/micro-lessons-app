@@ -28,10 +28,18 @@ export default function ChallengeCard({
     width: withTiming(`${progressPercent}%`, { duration: 500 }),
   }));
 
+  const cardLabel = completed
+    ? `${title}, completed, earned ${xpReward} experience points`
+    : `${title}, day ${Math.min(progress, durationDays)} of ${durationDays}, ${xpReward} experience points reward`;
+
   return (
-    <View style={[styles.card, completed && styles.cardCompleted]}>
+    <View
+      style={[styles.card, completed && styles.cardCompleted]}
+      accessible={true}
+      accessibilityLabel={cardLabel}
+    >
       <View style={styles.header}>
-        <Text style={styles.icon}>{icon}</Text>
+        <Text style={styles.icon} importantForAccessibility="no">{icon}</Text>
         <View style={styles.headerText}>
           <Text style={[styles.title, completed && styles.titleCompleted]}>
             {completed ? '✅ ' : ''}{title}

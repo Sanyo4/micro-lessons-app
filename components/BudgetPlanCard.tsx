@@ -27,7 +27,7 @@ export default function BudgetPlanCard({ suggestion, onApply }: BudgetPlanCardPr
   return (
     <View style={styles.card}>
       <View style={styles.header}>
-        <Text style={styles.icon}>{icon}</Text>
+        <Text style={styles.icon} importantForAccessibility="no">{icon}</Text>
         <View style={styles.headerText}>
           <Text style={styles.categoryName}>{suggestion.categoryName}</Text>
           <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
@@ -41,7 +41,7 @@ export default function BudgetPlanCard({ suggestion, onApply }: BudgetPlanCardPr
           <Text style={styles.limitLabel}>Current</Text>
           <Text style={styles.limitValue}>£{suggestion.currentLimit.toFixed(0)}/wk</Text>
         </View>
-        <Text style={styles.arrow}>→</Text>
+        <Text style={styles.arrow} importantForAccessibility="no">→</Text>
         <View style={styles.limitBox}>
           <Text style={styles.limitLabel}>Suggested</Text>
           <Text style={[styles.limitValue, styles.suggestedValue]}>£{adjustedLimit.toFixed(0)}/wk</Text>
@@ -54,14 +54,20 @@ export default function BudgetPlanCard({ suggestion, onApply }: BudgetPlanCardPr
             style={styles.stepperButton}
             onPress={() => setAdjustedLimit((v) => Math.max(v - 5, 5))}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={`Decrease ${suggestion.categoryName} limit by 5 pounds`}
           >
             <Text style={styles.stepperText}>-</Text>
           </TouchableOpacity>
-          <Text style={styles.stepperValue}>£{adjustedLimit.toFixed(0)}</Text>
+          <Text style={styles.stepperValue} accessibilityLiveRegion="polite">
+            £{adjustedLimit.toFixed(0)}
+          </Text>
           <TouchableOpacity
             style={styles.stepperButton}
             onPress={() => setAdjustedLimit((v) => v + 5)}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={`Increase ${suggestion.categoryName} limit by 5 pounds`}
           >
             <Text style={styles.stepperText}>+</Text>
           </TouchableOpacity>
@@ -75,6 +81,8 @@ export default function BudgetPlanCard({ suggestion, onApply }: BudgetPlanCardPr
           style={styles.applyButton}
           onPress={() => onApply(suggestion.categoryId, adjustedLimit)}
           activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={`Apply ${adjustedLimit} pound limit for ${suggestion.categoryName}`}
         >
           <Text style={styles.applyButtonText}>Apply</Text>
         </TouchableOpacity>
@@ -157,9 +165,9 @@ const styles = StyleSheet.create({
     gap: Spacing.lg,
   },
   stepperButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: Colors.border,
     justifyContent: 'center',
     alignItems: 'center',

@@ -28,6 +28,10 @@ import {
 import { aiService, type AIResult } from '../../services/ai';
 import { XP_AWARDS, getXPForNextLevel, getLevelTitle } from '../../utils/gamification';
 import { Colors, Spacing, FontSize, BorderRadius } from '../../constants/theme';
+import { getBudgetState } from '../../utils/budgetState';
+import { announceForScreenReader } from '../../utils/accessibility';
+import { announceScreen, playFullBudgetFeedback } from '../../services/audioFeedback';
+import { getBudgetCategories } from '../../services/database';
 import * as Speech from 'expo-speech';
 
 type InputMode = 'voice' | 'text';
@@ -37,8 +41,8 @@ export default function HomeScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isModelReady, setIsModelReady] = useState(false);
   const [modelLoadProgress, setModelLoadProgress] = useState(0);
-  const [inputMode, setInputMode] = useState<InputMode>('text');
-  const inputModeRef = useRef<InputMode>('text');
+  const [inputMode, setInputMode] = useState<InputMode>('voice');
+  const inputModeRef = useRef<InputMode>('voice');
 
   const handleModeChange = useCallback((mode: InputMode) => {
     Speech.stop();
@@ -80,6 +84,7 @@ export default function HomeScreen() {
   useFocusEffect(
     useCallback(() => {
       loadProfile();
+      announceScreen('Home', 'Log expenses by voice or text');
     }, [loadProfile])
   );
 
@@ -125,11 +130,18 @@ export default function HomeScreen() {
 
   const showXPPopup = (amount: number) => {
     setXpPopup({ amount, visible: true });
+    announceForScreenReader(`Earned ${amount} experience points`);
     setTimeout(() => setXpPopup({ amount: 0, visible: false }), 1500);
   };
 
   const handleSend = async (text: string) => {
     setIsProcessing(true);
+
+    // Voice mode: confirm what was heard
+    if (inputModeRef.current === 'voice') {
+      Speech.stop();
+      Speech.speak(`Processing: ${text}`, { language: 'en-US', rate: 1.0 });
+    }
 
     try {
       const result = await aiService.processUserInput(text);
@@ -158,6 +170,20 @@ export default function HomeScreen() {
         (f) => f.functionName === 'check_budget_status' && (f.data as { exceeded?: boolean })?.exceeded
       );
       const bannerType: BannerType = hasExceeded ? 'warning' : result.executedFunctions.length > 0 ? 'success' : 'info';
+
+      // Trigger multi-sensory budget feedback after a transaction
+      const hasTransaction = result.executedFunctions.some((f) => f.functionName === 'log_transaction');
+      if (hasTransaction) {
+        try {
+          const cats = await getBudgetCategories();
+          const totalSpent = cats.reduce((sum, c) => sum + c.spent, 0);
+          const totalLimit = cats.reduce((sum, c) => sum + c.weekly_limit, 0);
+          const state = getBudgetState(totalSpent, totalLimit);
+          playFullBudgetFeedback(state, totalSpent, totalLimit);
+        } catch {
+          // Non-critical — don't block UI
+        }
+      }
 
       showBanner(result.responseText, bannerType);
 
@@ -217,7 +243,7 @@ export default function HomeScreen() {
         >
           {/* 1. Title block */}
           <Animated.View entering={FadeIn.duration(600)} style={styles.titleBlock}>
-            <Text style={styles.appTitle}>MICRO{'\n'}LESSONS</Text>
+            <Text style={styles.appTitle} accessibilityRole="header">MICRO{'\n'}LESSONS</Text>
             <View style={styles.titleDivider} />
             {!isModelReady && (
               <Text style={styles.loadingText}>
@@ -268,7 +294,11 @@ export default function HomeScreen() {
 
           {/* 7. Level/XP/Streak Row */}
           {profile && (
-            <View style={styles.levelRow}>
+            <View
+              style={styles.levelRow}
+              accessible={true}
+              accessibilityLabel={`Level ${profile.level}${xpInfo ? `, ${xpInfo.current} of ${xpInfo.needed} experience points` : ''}${profile.streak_days > 0 ? `, ${profile.streak_days} day streak` : ''}`}
+            >
               <View style={styles.levelPill}>
                 <Text style={styles.levelText}>Lv {profile.level}</Text>
               </View>
@@ -278,7 +308,7 @@ export default function HomeScreen() {
                 </Text>
               )}
               {profile.streak_days > 0 && (
-                <Text style={styles.streakText}>🔥 {profile.streak_days}</Text>
+                <Text style={styles.streakText} importantForAccessibility="no">🔥 {profile.streak_days}</Text>
               )}
             </View>
           )}

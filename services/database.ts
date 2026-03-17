@@ -56,10 +56,120 @@ async function initializeDatabase(database: SQLite.SQLiteDatabase): Promise<void
       completed INTEGER DEFAULT 0,
       created_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS app_settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      pin_hash TEXT,
+      onboarding_completed INTEGER DEFAULT 0,
+      input_preference TEXT DEFAULT 'voice',
+      financial_persona TEXT DEFAULT 'beginner',
+      selected_plan_id TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS fixed_expenses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      amount REAL NOT NULL,
+      frequency TEXT DEFAULT 'monthly'
+    );
+
+    CREATE TABLE IF NOT EXISTS motivation_focuses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      focus_key TEXT NOT NULL UNIQUE,
+      selected INTEGER DEFAULT 0
+    );
   `);
+
+  // Migrate user_profile: add columns if missing
+  try {
+    await database.execAsync('ALTER TABLE user_profile ADD COLUMN monthly_income REAL DEFAULT 0');
+  } catch (_) { /* column already exists */ }
+  try {
+    await database.execAsync('ALTER TABLE user_profile ADD COLUMN flexible_budget REAL DEFAULT 0');
+  } catch (_) { /* column already exists */ }
 }
 
-// User Profile
+// ========== App Settings ==========
+
+export async function getAppSettings(): Promise<AppSettings | null> {
+  const database = await getDatabase();
+  const result = await database.getFirstAsync<AppSettings>('SELECT * FROM app_settings WHERE id = 1');
+  return result ?? null;
+}
+
+export async function createAppSettings(pinHash: string): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync(
+    'INSERT OR REPLACE INTO app_settings (id, pin_hash, onboarding_completed, input_preference, financial_persona, selected_plan_id, created_at) VALUES (1, ?, 0, ?, ?, ?, ?)',
+    [pinHash, 'voice', 'beginner', null, new Date().toISOString()]
+  );
+}
+
+export async function updateAppSettings(partial: Partial<Omit<AppSettings, 'id' | 'created_at'>>): Promise<void> {
+  const database = await getDatabase();
+  const sets: string[] = [];
+  const values: (string | number | null)[] = [];
+  if (partial.pin_hash !== undefined) { sets.push('pin_hash = ?'); values.push(partial.pin_hash ?? null); }
+  if (partial.onboarding_completed !== undefined) { sets.push('onboarding_completed = ?'); values.push(partial.onboarding_completed); }
+  if (partial.input_preference !== undefined) { sets.push('input_preference = ?'); values.push(partial.input_preference); }
+  if (partial.financial_persona !== undefined) { sets.push('financial_persona = ?'); values.push(partial.financial_persona); }
+  if (partial.selected_plan_id !== undefined) { sets.push('selected_plan_id = ?'); values.push(partial.selected_plan_id ?? null); }
+  if (sets.length === 0) return;
+  await database.runAsync(`UPDATE app_settings SET ${sets.join(', ')} WHERE id = 1`, values);
+}
+
+export async function verifyPin(inputHash: string): Promise<boolean> {
+  const settings = await getAppSettings();
+  if (!settings?.pin_hash) return false;
+  return settings.pin_hash === inputHash;
+}
+
+export async function isOnboardingCompleted(): Promise<boolean> {
+  const settings = await getAppSettings();
+  return settings?.onboarding_completed === 1;
+}
+
+// ========== Fixed Expenses ==========
+
+export async function getFixedExpenses(): Promise<FixedExpense[]> {
+  const database = await getDatabase();
+  return database.getAllAsync<FixedExpense>('SELECT * FROM fixed_expenses ORDER BY id');
+}
+
+export async function addFixedExpense(name: string, amount: number, frequency: string = 'monthly'): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync(
+    'INSERT INTO fixed_expenses (name, amount, frequency) VALUES (?, ?, ?)',
+    [name, amount, frequency]
+  );
+}
+
+export async function clearFixedExpenses(): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync('DELETE FROM fixed_expenses');
+}
+
+// ========== Motivation Focuses ==========
+
+export async function getMotivationFocuses(): Promise<{ focus_key: string; selected: number }[]> {
+  const database = await getDatabase();
+  return database.getAllAsync<{ focus_key: string; selected: number }>('SELECT focus_key, selected FROM motivation_focuses');
+}
+
+export async function setMotivationFocuses(keys: string[]): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync('DELETE FROM motivation_focuses');
+  for (const key of keys) {
+    await database.runAsync(
+      'INSERT INTO motivation_focuses (focus_key, selected) VALUES (?, 1)',
+      [key]
+    );
+  }
+}
+
+// ========== User Profile ==========
+
 export async function getUserProfile(): Promise<UserProfile | null> {
   const database = await getDatabase();
   const result = await database.getFirstAsync<UserProfile>('SELECT * FROM user_profile LIMIT 1');
@@ -78,7 +188,22 @@ export async function updateUserLevel(level: number): Promise<void> {
   await database.runAsync('UPDATE user_profile SET level = ? WHERE id = 1', [level]);
 }
 
-// Budget Categories
+export async function updateUserProfile(partial: Partial<Omit<UserProfile, 'id'>>): Promise<void> {
+  const database = await getDatabase();
+  const sets: string[] = [];
+  const values: (string | number)[] = [];
+  if (partial.name !== undefined) { sets.push('name = ?'); values.push(partial.name); }
+  if (partial.xp !== undefined) { sets.push('xp = ?'); values.push(partial.xp); }
+  if (partial.level !== undefined) { sets.push('level = ?'); values.push(partial.level); }
+  if (partial.streak_days !== undefined) { sets.push('streak_days = ?'); values.push(partial.streak_days); }
+  if (partial.monthly_income !== undefined) { sets.push('monthly_income = ?'); values.push(partial.monthly_income); }
+  if (partial.flexible_budget !== undefined) { sets.push('flexible_budget = ?'); values.push(partial.flexible_budget); }
+  if (sets.length === 0) return;
+  await database.runAsync(`UPDATE user_profile SET ${sets.join(', ')} WHERE id = 1`, values);
+}
+
+// ========== Budget Categories ==========
+
 export async function getBudgetCategories(): Promise<BudgetCategory[]> {
   const database = await getDatabase();
   return database.getAllAsync<BudgetCategory>('SELECT * FROM budget_categories ORDER BY name');
@@ -100,7 +225,8 @@ export async function updateCategorySpent(categoryId: string, amount: number): P
   );
 }
 
-// Transactions
+// ========== Transactions ==========
+
 export async function addTransaction(
   amount: number,
   categoryId: string,
@@ -163,7 +289,8 @@ export async function getCategorySpendingTotal(
   return result?.total ?? 0;
 }
 
-// Lessons
+// ========== Lessons ==========
+
 export async function markLessonCompleted(lessonId: string): Promise<void> {
   const database = await getDatabase();
   await database.runAsync(
@@ -188,7 +315,8 @@ export async function isLessonCompleted(lessonId: string): Promise<boolean> {
   return (result?.count ?? 0) > 0;
 }
 
-// Challenges
+// ========== Challenges ==========
+
 export async function createChallenge(challenge: Omit<Challenge, 'id' | 'progress' | 'active' | 'completed' | 'created_at'>): Promise<number> {
   const database = await getDatabase();
   const result = await database.runAsync(
@@ -233,13 +361,32 @@ export async function updateCategoryLimit(categoryId: string, newLimit: number):
   await database.runAsync('UPDATE budget_categories SET weekly_limit = ? WHERE id = ?', [newLimit, categoryId]);
 }
 
-// Types
+// ========== Reset ==========
+
+export async function resetApp(): Promise<void> {
+  const database = await getDatabase();
+  await database.execAsync(`
+    DELETE FROM transactions;
+    DELETE FROM completed_lessons;
+    DELETE FROM challenges;
+    DELETE FROM budget_categories;
+    DELETE FROM user_profile;
+    DELETE FROM fixed_expenses;
+    DELETE FROM motivation_focuses;
+    DELETE FROM app_settings;
+  `);
+}
+
+// ========== Types ==========
+
 export interface UserProfile {
   id: number;
   name: string;
   xp: number;
   level: number;
   streak_days: number;
+  monthly_income: number;
+  flexible_budget: number;
 }
 
 export interface BudgetCategory {
@@ -277,4 +424,21 @@ export interface Challenge {
   active: number;
   completed: number;
   created_at: string;
+}
+
+export interface AppSettings {
+  id: number;
+  pin_hash: string | null;
+  onboarding_completed: number;
+  input_preference: string;
+  financial_persona: string;
+  selected_plan_id: string | null;
+  created_at: string;
+}
+
+export interface FixedExpense {
+  id: number;
+  name: string;
+  amount: number;
+  frequency: string;
 }

@@ -12,6 +12,8 @@ import {
 } from '../../services/database';
 import { XP_AWARDS } from '../../utils/gamification';
 import { Colors, Spacing, FontSize, BorderRadius } from '../../constants/theme';
+import { announceScreen } from '../../services/audioFeedback';
+import FloatingVoiceButton from '../../components/FloatingVoiceButton';
 
 export default function ChallengesScreen() {
   const [activeChallenges, setActiveChallenges] = useState<Challenge[]>([]);
@@ -25,6 +27,7 @@ export default function ChallengesScreen() {
     ]);
     setActiveChallenges(active);
     setCompletedChallenges(completed);
+    announceScreen('Challenges', `${active.length} active, ${completed.length} completed`);
   }, []);
 
   useFocusEffect(
@@ -55,10 +58,16 @@ export default function ChallengesScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       {/* Header with back */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.navigate('/')} activeOpacity={0.7}>
+        <TouchableOpacity
+          onPress={() => router.navigate('/')}
+          activeOpacity={0.7}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back to home"
+        >
           <Text style={styles.backButton}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Challenges</Text>
+        <Text style={styles.headerTitle} accessibilityRole="header">Challenges</Text>
         <View style={styles.headerSpacer} />
       </View>
 
@@ -69,12 +78,12 @@ export default function ChallengesScreen() {
 
         {/* Active Challenges */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>
+          <Text style={styles.sectionTitle} accessibilityRole="header">
             Active ({activeChallenges.length})
           </Text>
           {activeChallenges.length === 0 && completedChallenges.length === 0 ? (
             <View style={styles.starterCard}>
-              <Text style={styles.starterIcon}>🎯</Text>
+              <Text style={styles.starterIcon} importantForAccessibility="no">🎯</Text>
               <Text style={styles.starterTitle}>Track every purchase</Text>
               <Text style={styles.starterDescription}>Log each purchase for 3 days to build the habit. You'll earn XP and unlock insights!</Text>
               <View style={styles.starterReward}>
@@ -93,7 +102,7 @@ export default function ChallengesScreen() {
             </View>
           ) : activeChallenges.length === 0 ? (
             <View style={styles.emptyCard}>
-              <Text style={styles.emptyIcon}>🎯</Text>
+              <Text style={styles.emptyIcon} importantForAccessibility="no">🎯</Text>
               <Text style={styles.emptyTitle}>No active challenges</Text>
               <Text style={styles.emptyText}>
                 Log some spending to unlock challenges!
@@ -120,7 +129,7 @@ export default function ChallengesScreen() {
         {/* Completed Challenges */}
         {completedChallenges.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>
+            <Text style={styles.sectionTitle} accessibilityRole="header">
               Completed ({completedChallenges.length})
             </Text>
             <View style={styles.challengeList}>
@@ -140,6 +149,7 @@ export default function ChallengesScreen() {
           </View>
         )}
       </ScrollView>
+      <FloatingVoiceButton />
     </SafeAreaView>
   );
 }
@@ -177,7 +187,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.xxxl,
+    paddingBottom: 80,
   },
   subtitle: {
     fontSize: FontSize.sm,

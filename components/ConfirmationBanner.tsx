@@ -2,6 +2,8 @@ import { useEffect } from 'react';
 import { Text, TouchableOpacity, StyleSheet } from 'react-native';
 import Animated, { FadeInDown, FadeOut } from 'react-native-reanimated';
 import { Colors, Spacing, FontSize, BorderRadius } from '../constants/theme';
+import { announceForScreenReader, getAccessibleTimeout } from '../utils/accessibility';
+import { playSuccessHaptic } from '../services/haptics';
 
 export type BannerType = 'success' | 'warning' | 'info' | 'error';
 
@@ -34,9 +36,16 @@ export default function ConfirmationBanner({
 }: ConfirmationBannerProps) {
   useEffect(() => {
     if (!visible) return;
-    const timer = setTimeout(onDismiss, 4000);
+
+    announceForScreenReader(message);
+    playSuccessHaptic();
+
+    let timer: ReturnType<typeof setTimeout>;
+    getAccessibleTimeout(8000).then((timeout) => {
+      timer = setTimeout(onDismiss, timeout);
+    });
     return () => clearTimeout(timer);
-  }, [visible, onDismiss]);
+  }, [visible, message, onDismiss]);
 
   if (!visible) return null;
 
@@ -44,6 +53,7 @@ export default function ConfirmationBanner({
     <Animated.View
       entering={FadeInDown.duration(300).springify()}
       exiting={FadeOut.duration(200)}
+      accessibilityLiveRegion="polite"
     >
       <TouchableOpacity
         style={[
@@ -52,6 +62,8 @@ export default function ConfirmationBanner({
         ]}
         onPress={onDismiss}
         activeOpacity={0.8}
+        accessibilityRole="alert"
+        accessibilityHint="Double tap to dismiss"
       >
         <Text style={styles.message}>{message}</Text>
       </TouchableOpacity>
@@ -64,10 +76,10 @@ const styles = StyleSheet.create({
     borderLeftWidth: 4,
     borderRadius: BorderRadius.sm,
     paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
+    paddingVertical: Spacing.lg,
   },
   message: {
-    fontSize: FontSize.sm,
+    fontSize: FontSize.lg,
     color: Colors.text,
     lineHeight: 20,
   },

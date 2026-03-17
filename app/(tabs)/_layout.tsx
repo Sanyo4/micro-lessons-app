@@ -8,11 +8,11 @@ export default function TabLayout() {
         tabBarStyle: { display: 'none' },
       }}
     >
-      <Tabs.Screen name="index" />
-      <Tabs.Screen name="budget" />
-      <Tabs.Screen name="challenges" />
-      <Tabs.Screen name="lessons" />
-      <Tabs.Screen name="how-it-works" />
+      <Tabs.Screen name="index" options={{ title: 'Home' }} />
+      <Tabs.Screen name="budget" options={{ title: 'Budget' }} />
+      <Tabs.Screen name="challenges" options={{ title: 'Challenges' }} />
+      <Tabs.Screen name="lessons" options={{ title: 'Lessons' }} />
+      <Tabs.Screen name="how-it-works" options={{ title: 'How It Works' }} />
     </Tabs>
   );
 }
