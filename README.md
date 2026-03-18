@@ -68,6 +68,36 @@ micro-lessons-app/
 
 ## Getting Started
 
+### Running on macOS (M Series — iOS Simulator)
+
+M series Macs run ARM natively, which means `cactus-react-native` and all other native modules work without any special configuration.
+
+**Prerequisites:**
+- Node.js 18+
+- Xcode (install from the Mac App Store)
+- Xcode Command Line Tools: `xcode-select --install`
+- CocoaPods: `sudo gem install cocoapods`
+
+**Install & Run:**
+```bash
+cd micro-lessons-app
+npm install
+npx expo run:ios
+```
+
+This will:
+1. Generate the `/ios` project via Expo prebuild
+2. Run `pod install` to link native modules (including cactus-react-native)
+3. Build and launch in the iOS Simulator
+
+On first launch, the app downloads the FunctionGemma-270M model (~270MB) to the device. This is a one-time download that runs in the background.
+
+**Note:** Expo Go is not supported — this app uses native modules that require a full dev build, which `expo run:ios` handles automatically.
+
+---
+
+### Running on Android
+
 ### Prerequisites
 - Node.js 18+
 - Android SDK (for Android builds)
