@@ -1,5 +1,5 @@
 import { useRef, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Modal, AccessibilityInfo, findNodeHandle } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Modal, AccessibilityInfo, findNodeHandle, Platform } from 'react-native';
 import Animated, { SlideInDown } from 'react-native-reanimated';
 import { Colors, Spacing, FontSize, BorderRadius } from '../constants/theme';
 
@@ -35,6 +35,7 @@ export default function MicroLessonModal({
   const titleRef = useRef<Text>(null);
 
   useEffect(() => {
+    if (Platform.OS === 'web') return;
     if (visible && lesson && titleRef.current) {
       const node = findNodeHandle(titleRef.current);
       if (node) {

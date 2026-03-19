@@ -1,8 +1,24 @@
-import {
-  CactusLM,
-  type CactusLMMessage,
-  type CactusLMTool,
-} from 'cactus-react-native';
+// import {
+//   CactusLM,
+//   type CactusLMMessage,
+//   type CactusLMTool,
+// } from 'cactus-react-native';
+
+// --- HuggingFace Inference API (dev mode replacement for Cactus on-device) ---
+const HF_API_URL = 'https://api-inference.huggingface.co/models/google/functiongemma-270m-it/v1/chat/completions';
+const HF_API_KEY = process.env.EXPO_PUBLIC_HF_API_KEY ?? '';
+
+type CactusLMMessage = { role: 'system' | 'user' | 'assistant'; content: string };
+type CactusLMTool = {
+  name: string;
+  description: string;
+  parameters: {
+    type: 'object';
+    properties: Record<string, { type: string; description: string }>;
+    required: string[];
+  };
+};
+
 import { getUserFacingFunctions } from '../data/functionDefs';
 import { executeFunctionCall, type FunctionCallResult } from './functionExecutor';
 import { getBudgetCategories, getAppSettings, type BudgetCategory } from './database';
@@ -37,7 +53,7 @@ const PERSONA_PROMPTS: Record<string, string> = {
 };
 
 class GemmaAIService {
-  private model: CactusLM | null = null;
+  // private model: CactusLM | null = null;  // cactus on-device model
   private isInitialized = false;
   private isInitializing = false;
 
@@ -45,25 +61,29 @@ class GemmaAIService {
     if (this.isInitialized || this.isInitializing) return;
     this.isInitializing = true;
 
-    try {
-      this.model = new CactusLM({
-        model: 'functiongemma-270m-it',
-      });
+    // --- HuggingFace API: no download/init needed ---
+    onProgress?.(1);
+    this.isInitialized = true;
+    this.isInitializing = false;
 
-      await this.model.download({
-        onProgress: (progress) => {
-          onProgress?.(progress);
-        },
-      });
-
-      await this.model.init();
-      this.isInitialized = true;
-    } catch (error) {
-      console.error('Failed to initialize AI model:', error);
-      throw error;
-    } finally {
-      this.isInitializing = false;
-    }
+    // --- Cactus on-device init (commented out) ---
+    // try {
+    //   this.model = new CactusLM({
+    //     model: 'functiongemma-270m-it',
+    //   });
+    //   await this.model.download({
+    //     onProgress: (progress) => {
+    //       onProgress?.(progress);
+    //     },
+    //   });
+    //   await this.model.init();
+    //   this.isInitialized = true;
+    // } catch (error) {
+    //   console.error('Failed to initialize AI model:', error);
+    //   throw error;
+    // } finally {
+    //   this.isInitializing = false;
+    // }
   }
 
   getInitStatus(): boolean {
@@ -119,18 +139,53 @@ ${budgetContext}`,
     ];
 
     try {
-      if (!this.model) throw new Error('Model not initialized');
+      if (!this.isInitialized) throw new Error('Model not initialized');
 
-      // Use forceTools to ensure the model always produces a function call
-      const result = await this.model.complete({
-        messages,
-        tools,
-        options: {
-          temperature: 0.3,
-          maxTokens: 256,
-          forceTools: true,
+      // --- HuggingFace Inference API call ---
+      if (!HF_API_KEY) console.warn('[AI] HF_API_KEY is empty — check .env.local has EXPO_PUBLIC_HF_API_KEY set');
+
+      const hfRes = await fetch(HF_API_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${HF_API_KEY}`,
+          'Content-Type': 'application/json',
         },
+        body: JSON.stringify({
+          messages,
+          tools: tools.map((t) => ({ type: 'function', function: t })),
+          tool_choice: 'required', // equivalent to cactus forceTools: true
+          temperature: 0.3,
+          max_tokens: 256,
+        }),
       });
+
+      if (!hfRes.ok) {
+        const errText = await hfRes.text();
+        console.error(`[AI] HF API error ${hfRes.status}:`, errText);
+        throw new Error(`HF API ${hfRes.status}: ${errText}`);
+      }
+
+      const hfData = await hfRes.json();
+      console.log('[AI] HF response:', JSON.stringify(hfData).slice(0, 300));
+      const hfMessage = hfData.choices?.[0]?.message;
+      const result = {
+        response: hfMessage?.content ?? '',
+        functionCalls: hfMessage?.tool_calls?.map((tc: { function: { name: string; arguments: string } }) => ({
+          name: tc.function.name,
+          arguments: JSON.parse(tc.function.arguments),
+        })) ?? [],
+      };
+
+      // --- Cactus on-device completion (commented out) ---
+      // const result = await this.model.complete({
+      //   messages,
+      //   tools,
+      //   options: {
+      //     temperature: 0.3,
+      //     maxTokens: 256,
+      //     forceTools: true,
+      //   },
+      // });
 
       const executedFunctions: FunctionCallResult[] = [];
       let responseText = result.response || '';
@@ -363,11 +418,15 @@ ${budgetContext}`,
   }
 
   async destroy(): Promise<void> {
-    if (this.model) {
-      await this.model.destroy();
-      this.model = null;
-      this.isInitialized = false;
-    }
+    // --- HuggingFace API: nothing to tear down ---
+    this.isInitialized = false;
+
+    // --- Cactus on-device teardown (commented out) ---
+    // if (this.model) {
+    //   await this.model.destroy();
+    //   this.model = null;
+    //   this.isInitialized = false;
+    // }
   }
 }
 

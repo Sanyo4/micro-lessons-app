@@ -30,7 +30,7 @@ export default function MotivationScreen() {
 
   const handleSelect = () => {
     const goal = GOALS[currentIndex];
-    setSelected((prev) => [...prev, goal.key]);
+    setSelected((prev) => prev.includes(goal.key) ? prev : [...prev, goal.key]);
     advance();
   };
 

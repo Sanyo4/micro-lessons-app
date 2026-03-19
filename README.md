@@ -1,11 +1,13 @@
 # Micro Lessons — Budget Tracker
 
-A voice-first, multi-sensory budget tracking app designed with vision impairment accessibility as a core feature. Uses on-device AI (FunctionGemma) for natural language spending input with contextual financial micro-lessons.
+A voice-first, multi-sensory budget tracking app designed with vision impairment accessibility as a core feature. Uses FunctionGemma for natural language spending input with contextual financial micro-lessons.
+
+> **Dev mode:** On-device AI (Cactus) is replaced with the HuggingFace Inference API for local development. See [AI Setup](#ai-setup) below.
 
 ## Overview
 
 Micro Lessons helps users track spending through voice or text, with:
-- **On-device AI** — FunctionGemma 270M processes all input locally (no cloud, no bank APIs)
+- **On-device AI** — FunctionGemma 270M for natural language spending input (Cactus on device, HuggingFace API in dev)
 - **Multi-sensory feedback** — Haptics, tonal audio, and TTS for every budget state
 - **Contextual micro-lessons** — Financial education triggered by real spending patterns
 - **Gamification** — XP, levels, streaks, and challenges to build better habits
@@ -68,9 +70,29 @@ micro-lessons-app/
 
 ## Getting Started
 
+### AI Setup
+
+The app uses the [HuggingFace Inference API](https://huggingface.co/google/functiongemma-270m-it) in dev mode instead of the on-device Cactus runtime. You need a free HuggingFace token to use the AI features.
+
+**1. Get a token:**
+- Go to [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+- Click **New token** → set type to **Read** → Create
+- Copy the token (starts with `hf_...`)
+
+**2. Create `.env.local` in the project root:**
+```bash
+EXPO_PUBLIC_HF_API_KEY=hf_your_token_here
+```
+
+> `.env.local` is gitignored — never commit your token.
+
+**Note:** The HuggingFace API is blocked by CORS when running on web (`--web`). Test AI features using an Android emulator (`npx expo start` → press `a`) or physical device.
+
+---
+
 ### Running on macOS (M Series — iOS Simulator)
 
-M series Macs run ARM natively, which means `cactus-react-native` and all other native modules work without any special configuration.
+M series Macs run ARM natively, which means all native modules work without any special configuration. To restore on-device Cactus inference (no API key needed), re-add `cactus-react-native` to `package.json` and uncomment the Cactus code in `services/ai.ts`.
 
 **Prerequisites:**
 - Node.js 18+
@@ -87,12 +109,55 @@ npx expo run:ios
 
 This will:
 1. Generate the `/ios` project via Expo prebuild
-2. Run `pod install` to link native modules (including cactus-react-native)
+2. Run `pod install` to link native modules
 3. Build and launch in the iOS Simulator
 
-On first launch, the app downloads the FunctionGemma-270M model (~270MB) to the device. This is a one-time download that runs in the background.
-
 **Note:** Expo Go is not supported — this app uses native modules that require a full dev build, which `expo run:ios` handles automatically.
+
+---
+
+### Running on a Physical iPhone (any Mac)
+
+If you have an iPhone, you can run the app directly on it from any Mac (Intel or M series).
+
+**Prerequisites:**
+- Node.js 18+
+- Xcode + Xcode Command Line Tools
+- CocoaPods: `sudo gem install cocoapods`
+- iPhone connected via USB (or on the same Wi-Fi for wireless)
+- iPhone trusted on your Mac (accept the prompt on the device)
+
+**Install & Run:**
+```bash
+cd micro-lessons-app
+npm install
+npx expo run:ios --device
+```
+
+Xcode will prompt you to select your device. The app will build and install directly onto your iPhone.
+
+> **AI on physical iPhone:** A physical iPhone is ARM64, so Cactus on-device inference will work. To restore it, re-add `cactus-react-native` to `package.json` and uncomment the Cactus code in `services/ai.ts`. With the HF API swap in place, just ensure `.env.local` has your `EXPO_PUBLIC_HF_API_KEY`.
+
+---
+
+### Running on Intel Mac (iOS Simulator)
+
+Intel Macs run x86_64, so the Cactus native library (ARM64-only) will not load in the iOS Simulator. The HuggingFace API swap handles this automatically — the simulator uses the API instead of on-device inference.
+
+**Prerequisites:**
+- Node.js 18+
+- Xcode + Xcode Command Line Tools
+- CocoaPods: `sudo gem install cocoapods`
+- `.env.local` with `EXPO_PUBLIC_HF_API_KEY` set (see [AI Setup](#ai-setup))
+
+**Install & Run:**
+```bash
+cd micro-lessons-app
+npm install
+npx expo run:ios
+```
+
+AI features will route through the HuggingFace API. Everything else runs natively.
 
 ---
 
@@ -128,7 +193,7 @@ The APK will be at `android/app/build/outputs/apk/release/app-release.apk`.
 | `expo-speech` ~55.0.8 | Text-to-speech output |
 | `expo-haptics` | Haptic feedback patterns |
 | `expo-crypto` | SHA-256 PIN hashing |
-| `cactus-react-native` ~1.7.0 | On-device FunctionGemma AI |
+| ~~`cactus-react-native` ~1.7.0~~ | ~~On-device FunctionGemma AI~~ — removed for dev; replaced with HuggingFace Inference API (see `services/ai.ts`) |
 | `react-native-reanimated` ~4.2.2 | Animations |
 | `react-native-gesture-handler` | Swipe gestures |
 
@@ -182,8 +247,10 @@ Data is accumulated in-memory via `OnboardingContext` and written to DB only on 
 ## AI System
 
 ### FunctionGemma
-- **Model:** `functiongemma-270m-it` (on-device, ~270M parameters)
-- **Framework:** Cactus React Native wrapper
+- **Model:** `functiongemma-270m-it` (~270M parameters)
+- **Production:** Cactus React Native — runs entirely on-device, no internet required
+- **Development:** HuggingFace Inference API — requires `.env.local` with `EXPO_PUBLIC_HF_API_KEY` (see [AI Setup](#ai-setup))
+- **Framework (production):** Cactus React Native wrapper
 - Downloaded on first launch, runs entirely on-device
 
 ### Function Calling
