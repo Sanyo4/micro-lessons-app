@@ -72,7 +72,7 @@ export default function PinSetupScreen() {
         // Still create app settings (needed for onboarding flow)
         const pinHash = await hashPin('biometric');
         await createAppSettings(pinHash);
-        setTimeout(() => router.push('/onboarding/shake-practice'), 1000);
+        setTimeout(() => router.push('/onboarding/done'), 1000);
       } else {
         Speech.speak("That didn't work. Try again or switch to PIN.", { rate: 0.95 });
       }
@@ -105,7 +105,7 @@ export default function PinSetupScreen() {
             Speech.speak('PIN created', { rate: 0.95 });
             const pinHash = await hashPin(newPin);
             await createAppSettings(pinHash);
-            router.push('/onboarding/shake-practice');
+            router.push('/onboarding/done');
           } else {
             await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
             Speech.speak("PINs don't match. Try again.", { rate: 1.0 });
@@ -135,7 +135,7 @@ export default function PinSetupScreen() {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.base.background }]}>
       <View style={styles.inner}>
-        <OnboardingProgress currentStep={7} totalSteps={9} />
+        <OnboardingProgress currentStep={8} totalSteps={9} />
 
         {mode === 'biometric' ? (
           /* Biometric setup */

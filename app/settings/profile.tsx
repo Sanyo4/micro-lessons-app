@@ -43,7 +43,7 @@ export default function ProfileScreen() {
   const handleReset = () => {
     Alert.alert('Reset App', 'This will erase all data. Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Reset', style: 'destructive', onPress: async () => { await resetApp(); router.replace('/onboarding/welcome'); } },
+      { text: 'Reset', style: 'destructive', onPress: async () => { await resetApp(); router.replace('/onboarding/shake-practice'); } },
     ]);
   };
 

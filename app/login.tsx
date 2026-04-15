@@ -106,7 +106,7 @@ export default function LoginScreen() {
           style: 'destructive',
           onPress: async () => {
             await resetApp();
-            router.replace('/onboarding/welcome');
+            router.replace('/onboarding/shake-practice');
           },
         },
       ]

@@ -110,7 +110,7 @@ export default function AccessibilityScreen() {
       style={[styles.container, { backgroundColor: theme.colors.base.background }]}
     >
       <View style={styles.inner}>
-        <OnboardingProgress currentStep={6} totalSteps={9} />
+        <OnboardingProgress currentStep={7} totalSteps={9} />
 
         <Text
           style={[

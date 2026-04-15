@@ -90,7 +90,7 @@ export default function PlanScreen() {
       style={[styles.container, { backgroundColor: theme.colors.base.background }]}
     >
       <View style={styles.inner}>
-        <OnboardingProgress currentStep={5} totalSteps={9} />
+        <OnboardingProgress currentStep={6} totalSteps={9} />
 
         <Text
           style={[

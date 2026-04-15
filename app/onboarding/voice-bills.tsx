@@ -62,7 +62,7 @@ export default function VoiceBillsScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.inner}>
-        <OnboardingProgress currentStep={3} totalSteps={9} />
+        <OnboardingProgress currentStep={4} totalSteps={9} />
 
         <Text style={styles.title} accessibilityRole="header">Regular Bills</Text>
         <Text style={styles.subtitle}>Name each bill and its amount. Say "done" when finished.</Text>

@@ -21,7 +21,7 @@ function AuthGate() {
 
     if (isNewUser || !isOnboarded) {
       if (!inOnboarding) {
-        router.replace('/onboarding/welcome');
+        router.replace('/onboarding/shake-practice');
       }
     } else if (!isAuthenticated) {
       if (!inLogin) {

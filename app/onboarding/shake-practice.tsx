@@ -1,4 +1,4 @@
-// Onboarding: Shake-to-talk practice — user must shake to continue
+// Onboarding step 1: Shake-to-talk intro — user must shake to continue
 import { useState, useEffect } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -7,19 +7,14 @@ import * as Haptics from 'expo-haptics';
 import * as Speech from 'expo-speech';
 import Animated, { FadeInDown, useSharedValue, useAnimatedStyle, withRepeat, withTiming, Easing } from 'react-native-reanimated';
 import OnboardingProgress from '../../components/OnboardingProgress';
-import PetTerminal from '../../components/pet/PetTerminal';
-import SpeechBubble from '../../components/pet/SpeechBubble';
-import { useOnboarding } from '../../services/onboardingContext';
 import { useShakeDetector } from '../../hooks/useShakeDetector';
 import { useTheme } from '../../theme';
 
 export default function ShakePracticeScreen() {
   const theme = useTheme();
-  const { data } = useOnboarding();
   const [shaken, setShaken] = useState(false);
   const [shakeCount, setShakeCount] = useState(0);
 
-  const petName = data.petName || 'Buddy';
   const mono = theme.fontsLoaded ? theme.fonts.monospace : theme.fonts.monospaceFallback;
 
   // Subtle bob animation for the shake hint
@@ -49,16 +44,15 @@ export default function ShakePracticeScreen() {
     debounceMs: 800,
   });
 
-  // After first shake — confirm and proceed
+  // After first shake — confirm and proceed to welcome
   useEffect(() => {
     if (shakeCount >= 1 && !shaken) {
       setShaken(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Speech.speak("Nice! You've got it. Shake anytime to talk to me.", { rate: 0.9 });
-      // Navigate after a moment
+      Speech.speak("Nice! You can shake anytime to talk. Throughout setup, shake and speak your answers.", { rate: 0.9 });
       setTimeout(() => {
-        router.push('/onboarding/done');
-      }, 2500);
+        router.push('/onboarding/welcome');
+      }, 3000);
     }
   }, [shakeCount, shaken]);
 
@@ -66,39 +60,36 @@ export default function ShakePracticeScreen() {
   useEffect(() => {
     const timer = setTimeout(() => {
       Speech.speak(
-        `One more thing! You can talk to ${petName} without touching the screen. Just shake your phone to start talking. Try it now!`,
+        "Welcome! This app is fully voice controlled. Shake your phone to start talking. Try it now!",
         { rate: 0.9 },
       );
     }, 800);
     return () => clearTimeout(timer);
-  }, [petName]);
+  }, []);
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.base.background }]}>
       <View style={styles.inner}>
-        <OnboardingProgress currentStep={8} totalSteps={9} />
+        <OnboardingProgress currentStep={1} totalSteps={9} />
 
         <View style={styles.content}>
-          {/* Pet */}
-          <Animated.View entering={FadeInDown.duration(600)}>
-            <PetTerminal petState="happy" petName={petName} />
-          </Animated.View>
-
-          {/* Speech bubble */}
-          <Animated.View entering={FadeInDown.delay(400).duration(600)}>
-            <SpeechBubble
-              message={
-                shaken
-                  ? `Nice! You've got it. Shake anytime to talk to me.`
-                  : `One more thing! You can talk to me without touching the screen. Just shake your phone to start talking. Try it now!`
-              }
-            />
+          {/* Terminal intro card */}
+          <Animated.View
+            entering={FadeInDown.duration(600)}
+            style={[styles.introCard, { backgroundColor: theme.colors.base.terminal, borderRadius: theme.radius.terminal }]}
+          >
+            <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 16, textAlign: 'center', fontWeight: '700' }}>
+              {'── Voice First ──'}
+            </Text>
+            <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14, textAlign: 'center', marginTop: 8, opacity: 0.8, lineHeight: 22 }}>
+              {'> this app is fully voice\n  controlled. you can use it\n  without looking at the screen.'}
+            </Text>
           </Animated.View>
 
           {/* Shake hint */}
           {!shaken ? (
             <Animated.View
-              entering={FadeInDown.delay(800).duration(600)}
+              entering={FadeInDown.delay(600).duration(600)}
               style={[styles.hintCard, { backgroundColor: theme.colors.base.terminal, borderRadius: theme.radius.terminal }]}
             >
               <Animated.View style={bobStyle}>
@@ -107,10 +98,10 @@ export default function ShakePracticeScreen() {
                 </Text>
               </Animated.View>
               <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14, textAlign: 'center', marginTop: 12, opacity: 0.8 }}>
-                {'> shake your phone to continue'}
+                {'> shake your phone to begin'}
               </Text>
               <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 12, textAlign: 'center', marginTop: 4, opacity: 0.5 }}>
-                {'this activates voice input\nso you can use the app eyes-free'}
+                {'shake activates voice input\nuse it to answer all questions'}
               </Text>
             </Animated.View>
           ) : (
@@ -125,7 +116,7 @@ export default function ShakePracticeScreen() {
                 {'> shake detected!'}
               </Text>
               <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 12, textAlign: 'center', marginTop: 4, opacity: 0.5 }}>
-                {'heading to the app...'}
+                {"let's get started..."}
               </Text>
             </Animated.View>
           )}
@@ -147,6 +138,9 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     gap: 16,
+  },
+  introCard: {
+    padding: 20,
   },
   hintCard: {
     padding: 24,
