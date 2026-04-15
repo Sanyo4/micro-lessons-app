@@ -103,14 +103,29 @@ export async function executeFunctionCall(
       return handleGetHelp(params);
     case 'open_settings':
       return handleOpenSettings(params);
-    default:
+    default: {
+      // Map common LLM hallucinations to the right handler
+      const aliasMap: Record<string, string> = {
+        'get_quest_progress': 'get_quest_log',
+        'show_budget': 'get_budget_overview',
+        'show_quests': 'get_quest_log',
+        'create_challenge': 'accept_challenge',
+        'start_challenge': 'accept_challenge',
+        'view_budget': 'get_budget_overview',
+        'navigate_to_screen': 'get_help',
+      };
+      const resolved = aliasMap[name];
+      if (resolved) {
+        return executeFunctionCall({ name: resolved, arguments: params });
+      }
       return {
         functionName: name,
         success: false,
         params,
-        responseText: `Unknown function: ${name}`,
+        responseText: `I didn't understand that. Try saying "help" to see what I can do.`,
         xpEarned: 0,
       };
+    }
   }
 }
 

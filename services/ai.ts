@@ -359,15 +359,16 @@ ${budgetContext}`,
     }
 
     // Fallback function routing via keywords
+    // Order matters — more specific phrases must come before generic ones
     const functionKeywords: Array<{ fn: string; args: Record<string, unknown>; keywords: string[] }> = [
       { fn: 'get_help', args: {}, keywords: ['help', 'what can i do', 'what can i say'] },
       { fn: 'open_settings', args: {}, keywords: ['settings', 'open settings', 'preferences', 'edit name', 'rename'] },
+      { fn: 'accept_challenge', args: {}, keywords: ['start a challenge', 'accept challenge', 'new quest', 'start quest', 'start challenge'] },
       { fn: 'get_budget_overview', args: {}, keywords: ['budget', 'budgets', 'how much left', 'overview'] },
-      { fn: 'get_quest_log', args: {}, keywords: ['quest', 'quests', 'challenge', 'challenges'] },
+      { fn: 'get_quest_log', args: {}, keywords: ['quest log', 'quests', 'quest progress', 'challenges', 'my challenges', 'show quests'] },
       { fn: 'check_pet_status', args: {}, keywords: ['how is buddy', "how's buddy", 'pet status', 'how are you'] },
       { fn: 'get_recent_transactions', args: {}, keywords: ['recent', 'last transactions', 'what did i spend', 'history'] },
       { fn: 'get_mood_history', args: {}, keywords: ['mood history', 'mood', 'how has buddy been'] },
-      { fn: 'accept_challenge', args: {}, keywords: ['start a challenge', 'accept challenge', 'new quest', 'start quest'] },
     ];
 
     for (const route of functionKeywords) {
