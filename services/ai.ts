@@ -55,6 +55,8 @@ class GemmaAIService {
   private model: CactusLM | null = null;
   private isInitialized = false;
   private isInitializing = false;
+  // Tracks the last category referenced — for follow-up commands like "increase by 5"
+  private lastCategoryId: string | null = null;
 
   async init(onProgress?: (progress: number) => void): Promise<void> {
     if (this.isInitialized || this.isInitializing) return;
@@ -124,8 +126,15 @@ class GemmaAIService {
     const adjustKeywords = ['adjust', 'change limit', 'increase', 'decrease', 'raise', 'lower'];
     if (adjustKeywords.some((kw) => lower.includes(kw))) {
       const cats = await getBudgetCategories();
-      const matchedCat = cats.find((c) => lower.includes(c.name.toLowerCase()) || lower.includes(c.id.toLowerCase()));
+      let matchedCat = cats.find((c) => lower.includes(c.name.toLowerCase()) || lower.includes(c.id.toLowerCase()));
+
+      // Fall back to last referenced category for follow-ups like "increase by 5"
+      if (!matchedCat && this.lastCategoryId) {
+        matchedCat = cats.find((c) => c.id === this.lastCategoryId) ?? undefined;
+      }
+
       if (matchedCat) {
+        this.lastCategoryId = matchedCat.id;
         const direction = lower.includes('increase') || lower.includes('raise') || lower.includes('more')
           ? 'increase'
           : lower.includes('decrease') || lower.includes('lower') || lower.includes('less') || lower.includes('reduce')
@@ -146,6 +155,7 @@ class GemmaAIService {
       const cats = await getBudgetCategories();
       const matchedCat = cats.find((c) => lower.includes(c.name.toLowerCase()) || lower.includes(c.id.toLowerCase()));
       if (matchedCat) {
+        this.lastCategoryId = matchedCat.id;
         return this.executeDeterministic('get_category_detail', { category: matchedCat.id });
       }
     }
