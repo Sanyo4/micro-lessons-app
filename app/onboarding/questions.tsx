@@ -6,6 +6,7 @@ import { useTheme } from '../../theme';
 import { useOnboarding } from '../../services/onboardingContext';
 import { getPetArt } from '../../assets/pet';
 import SpeechBubble from '../../components/pet/SpeechBubble';
+import { useVoiceOnboarding } from '../../hooks/useVoiceOnboarding';
 
 interface Question {
   text: string;
@@ -33,6 +34,10 @@ export default function QuestionsScreen() {
   const isFinished = currentIndex >= QUESTIONS.length;
   const currentQuestion = !isFinished ? QUESTIONS[currentIndex] : null;
 
+  const voiceInstruction = currentQuestion
+    ? `Question ${currentIndex + 1} of 5. ${currentQuestion.text}. Say yes or no.`
+    : '';
+
   const handleAnswer = useCallback(
     (answer: 'yes' | 'no') => {
       if (!currentQuestion) return;
@@ -54,7 +59,7 @@ export default function QuestionsScreen() {
         setCurrentIndex(nextIndex);
         // Small delay so the user sees the final state before navigating
         setTimeout(() => {
-          router.push('/onboarding/income');
+          router.push('/onboarding/voice-income');
         }, 400);
       } else {
         setCurrentIndex(nextIndex);
@@ -62,6 +67,19 @@ export default function QuestionsScreen() {
     },
     [currentIndex, currentQuestion, selectedTags, updateData],
   );
+
+  const { isListening, transcript } = useVoiceOnboarding({
+    instruction: voiceInstruction,
+    keywords: {
+      'yes': () => handleAnswer('yes'),
+      'yeah': () => handleAnswer('yes'),
+      'yep': () => handleAnswer('yes'),
+      'no': () => handleAnswer('no'),
+      'nope': () => handleAnswer('no'),
+      'nah': () => handleAnswer('no'),
+    },
+    enabled: !isFinished,
+  });
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.base.background }]}>
@@ -162,6 +180,22 @@ export default function QuestionsScreen() {
                 {'> (Y/N)? _'}
               </Text>
             </View>
+
+            {/* Voice listening indicator */}
+            {isListening && (
+              <Text
+                style={{
+                  color: theme.colors.petStates.thriving.light,
+                  fontFamily: monoFont,
+                  fontSize: theme.typeScale.terminalSmall,
+                  textAlign: 'center',
+                  marginTop: theme.spacing.sm,
+                  opacity: 0.9,
+                }}
+              >
+                {transcript ? `> heard: "${transcript}"` : '> listening...'}
+              </Text>
+            )}
 
             {/* Y / N buttons */}
             <View style={[styles.buttonRow, { marginTop: theme.spacing.xl }]}>

@@ -54,7 +54,7 @@ export default function TextExpensesScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.inner}>
-        <OnboardingProgress currentStep={3} totalSteps={8} />
+        <OnboardingProgress currentStep={3} totalSteps={9} />
 
         <Text style={styles.title} accessibilityRole="header">Regular Bills</Text>
         <Text style={styles.subtitle}>Toggle and adjust your monthly bills</Text>

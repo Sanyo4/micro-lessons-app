@@ -60,7 +60,7 @@ export default function MotivationScreen() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaView style={styles.container}>
         <View style={styles.inner}>
-          <OnboardingProgress currentStep={2} totalSteps={8} />
+          <OnboardingProgress currentStep={2} totalSteps={9} />
 
           <Text style={styles.title} accessibilityRole="header">What matters to you?</Text>
           <Text style={styles.subtitle}>Swipe right to select, left to skip</Text>

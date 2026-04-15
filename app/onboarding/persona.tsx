@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -6,6 +6,7 @@ import * as Speech from 'expo-speech';
 import { router } from 'expo-router';
 import OnboardingProgress from '../../components/OnboardingProgress';
 import { useOnboarding } from '../../services/onboardingContext';
+import { useVoiceOnboarding } from '../../hooks/useVoiceOnboarding';
 import { Colors, Spacing, FontSize, BorderRadius } from '../../constants/theme';
 
 const PERSONAS = [
@@ -32,23 +33,47 @@ const PERSONAS = [
 export default function PersonaScreen() {
   const { data, updateData } = useOnboarding();
   const [selected, setSelected] = useState<'beginner' | 'learner' | 'pro'>(data.financialPersona);
+  const autoContinueTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleSelect = (key: 'beginner' | 'learner' | 'pro') => {
+  const handleSelect = useCallback((key: 'beginner' | 'learner' | 'pro') => {
     setSelected(key);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const persona = PERSONAS.find((p) => p.key === key)!;
     Speech.speak(persona.title, { rate: 0.95 });
-  };
+  }, []);
 
-  const handleContinue = () => {
+  const handleContinue = useCallback(() => {
     updateData({ financialPersona: selected });
     router.push('/onboarding/plan');
-  };
+  }, [selected, updateData]);
+
+  const handleVoiceSelect = useCallback((key: 'beginner' | 'learner' | 'pro') => {
+    handleSelect(key);
+    if (autoContinueTimer.current) clearTimeout(autoContinueTimer.current);
+    autoContinueTimer.current = setTimeout(() => {
+      updateData({ financialPersona: key });
+      router.push('/onboarding/plan');
+    }, 1500);
+  }, [handleSelect, updateData]);
+
+  useVoiceOnboarding({
+    instruction: "How should we talk about money? Say 'simple' for plain language, 'basics' for some explanation, or 'data' for full detail.",
+    keywords: {
+      'simple': () => handleVoiceSelect('beginner'),
+      'beginner': () => handleVoiceSelect('beginner'),
+      'basics': () => handleVoiceSelect('learner'),
+      'learner': () => handleVoiceSelect('learner'),
+      'data': () => handleVoiceSelect('pro'),
+      'pro': () => handleVoiceSelect('pro'),
+      'raw': () => handleVoiceSelect('pro'),
+    },
+    enabled: true,
+  });
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.inner}>
-        <OnboardingProgress currentStep={4} totalSteps={8} />
+        <OnboardingProgress currentStep={4} totalSteps={9} />
 
         <Text style={styles.title} accessibilityRole="header">Communication Style</Text>
         <Text style={styles.subtitle}>How should we talk about money?</Text>

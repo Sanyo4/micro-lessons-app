@@ -2,15 +2,24 @@ import {
   addTransaction,
   updateCategorySpent,
   getBudgetCategory,
+  getBudgetCategories,
   getCategorySpendingTotal,
   getTransactionsByCategory,
+  getRecentTransactions,
   createChallenge,
   getCompletedLessons,
+  getCompletedChallenges,
   markLessonCompleted,
   updateUserXP,
   getActiveChallenges,
   updateChallengeProgress,
   completeChallenge,
+  isGameCompleted,
+  updateCategoryLimit,
+  getUserProfile,
+  getPetProfile,
+  getPetHealth,
+  getPetStateHistory,
 } from './database';
 import { getLessonByTrigger, getLessonById, getPersonalityResponse, type MicroLesson } from '../data/lessons';
 import { XP_AWARDS } from '../utils/gamification';
@@ -22,15 +31,32 @@ export interface ParsedFunctionCall {
   arguments: Record<string, unknown>;
 }
 
+export type ContentType =
+  | 'idle'
+  | 'budget_overview'
+  | 'category_detail'
+  | 'quest_log'
+  | 'quest_progress'
+  | 'pet_status'
+  | 'mood_history'
+  | 'transactions'
+  | 'help'
+  | 'confirmation'
+  | 'game_needs_vs_wants'
+  | 'game_bnpl'
+  | 'savings_projection';
+
 export interface FunctionCallResult {
   functionName: string;
   success: boolean;
   params: Record<string, unknown>;
   data?: unknown;
   responseText?: string;
+  contentType?: ContentType;
   xpEarned: number;
   lesson?: MicroLesson | null;
   petCoachingDialogue?: string;
+  game?: string | null;
 }
 
 export async function executeFunctionCall(
@@ -55,8 +81,28 @@ export async function executeFunctionCall(
       return handleCalculateSavingsImpact(params);
     case 'check_time_triggers':
       return handleCheckTimeTriggers(params);
-    case 'navigate_to_screen':
-      return handleNavigateToScreen(params);
+    case 'get_budget_overview':
+      return handleGetBudgetOverview(params);
+    case 'get_category_detail':
+      return handleGetCategoryDetail(params);
+    case 'adjust_budget_limit':
+      return handleAdjustBudgetLimit(params);
+    case 'get_recent_transactions':
+      return handleGetRecentTransactions(params);
+    case 'get_quest_log':
+      return handleGetQuestLog(params);
+    case 'accept_challenge':
+      return handleAcceptChallenge(params);
+    case 'check_pet_status':
+      return handleCheckPetStatus(params);
+    case 'get_mood_history':
+      return handleGetMoodHistory(params);
+    case 'get_savings_projection':
+      return handleGetSavingsProjection(params);
+    case 'get_help':
+      return handleGetHelp(params);
+    case 'open_settings':
+      return handleOpenSettings(params);
     default:
       return {
         functionName: name,
@@ -181,6 +227,22 @@ async function handleLogTransaction(
       responseText += challengeCompletionText;
     }
 
+    // Check if coaching games should trigger
+    let game: string | null = null;
+    try {
+      const recentTxns = await getRecentTransactions(10);
+      const discretionaryIds = ['dining', 'fun', 'entertainment', 'shopping', 'coffee', 'impulse', 'social', 'personal', 'wants', 'discretionary'];
+      const discretionaryCount = recentTxns.filter(t => discretionaryIds.includes(t.category_id)).length;
+      if (discretionaryCount >= 3 && !(await isGameCompleted('needs_vs_wants'))) {
+        game = 'needs_vs_wants';
+      }
+      const installmentKeywords = ['installment', 'klarna', 'clearpay', 'afterpay', 'bnpl', 'pay later'];
+      const installmentCount = recentTxns.filter(t => installmentKeywords.some(kw => t.description.toLowerCase().includes(kw))).length;
+      if (installmentCount >= 3 && !(await isGameCompleted('bnpl'))) {
+        game = 'bnpl';
+      }
+    } catch { /* game triggers are non-critical */ }
+
     return {
       functionName: 'log_transaction',
       success: true,
@@ -190,6 +252,7 @@ async function handleLogTransaction(
       xpEarned: totalXP,
       lesson: lesson ?? null,
       petCoachingDialogue,
+      game,
     };
   } catch (error) {
     return {
@@ -524,24 +587,421 @@ async function handleCheckTimeTriggers(
   };
 }
 
-function handleNavigateToScreen(
+// ========== New Voice-First Handlers ==========
+
+async function handleGetBudgetOverview(
   params: Record<string, unknown>
-): FunctionCallResult {
-  const screen = params.screen as string;
-  const screenNames: Record<string, string> = {
-    budget: 'My Budget',
-    lessons: 'Lessons',
-    challenges: 'Challenges',
-    home: 'Home',
-    'how-it-works': 'How It Works',
-  };
+): Promise<FunctionCallResult> {
+  try {
+    const categories = await getBudgetCategories();
+    const totalSpent = categories.reduce((sum, c) => sum + c.spent, 0);
+    const totalLimit = categories.reduce((sum, c) => sum + c.weekly_limit, 0);
+    const totalRemaining = totalLimit - totalSpent;
+    const overallPercent = totalLimit > 0 ? Math.round((totalSpent / totalLimit) * 100) : 0;
+
+    const categoryLines = categories.map((c) => {
+      const pct = c.weekly_limit > 0 ? Math.round((c.spent / c.weekly_limit) * 100) : 0;
+      const remaining = c.weekly_limit - c.spent;
+      const name = c.name.charAt(0).toUpperCase() + c.name.slice(1);
+      const status = remaining < 0 ? 'over' : pct > 80 ? 'tight' : 'ok';
+      return { name, spent: c.spent, limit: c.weekly_limit, remaining, pct, status, id: c.id };
+    });
+
+    // Build TTS-friendly response
+    const tightCategories = categoryLines.filter((c) => c.status === 'tight' || c.status === 'over');
+    let responseText = `Your budget is ${overallPercent}% used this week. `;
+    if (totalRemaining > 0) {
+      responseText += `\u00A3${totalRemaining.toFixed(2)} left overall. `;
+    } else {
+      responseText += `You're \u00A3${Math.abs(totalRemaining).toFixed(2)} over budget overall. `;
+    }
+    if (tightCategories.length > 0) {
+      responseText += tightCategories
+        .map((c) => `${c.name} is ${c.status === 'over' ? 'over budget' : `at ${c.pct}%`}`)
+        .join('. ') + '.';
+    } else {
+      responseText += 'Everything looks on track.';
+    }
+
+    return {
+      functionName: 'get_budget_overview',
+      success: true,
+      params,
+      data: { categories: categoryLines, totalSpent, totalLimit, totalRemaining, overallPercent },
+      responseText,
+      contentType: 'budget_overview',
+      xpEarned: 0,
+    };
+  } catch {
+    return { functionName: 'get_budget_overview', success: false, params, responseText: 'Failed to get budget overview.', xpEarned: 0 };
+  }
+}
+
+async function handleGetCategoryDetail(
+  params: Record<string, unknown>
+): Promise<FunctionCallResult> {
+  const category = params.category as string;
+  try {
+    const budgetCat = await getBudgetCategory(category);
+    if (!budgetCat) {
+      return { functionName: 'get_category_detail', success: false, params, responseText: `Category "${category}" not found.`, xpEarned: 0 };
+    }
+    const transactions = await getTransactionsByCategory(category, 'weekly');
+    const recent = transactions.slice(0, 5);
+    const remaining = budgetCat.weekly_limit - budgetCat.spent;
+    const pct = budgetCat.weekly_limit > 0 ? Math.round((budgetCat.spent / budgetCat.weekly_limit) * 100) : 0;
+    const categoryName = budgetCat.name.charAt(0).toUpperCase() + budgetCat.name.slice(1);
+
+    let responseText = `${categoryName}: \u00A3${budgetCat.spent.toFixed(2)} of \u00A3${budgetCat.weekly_limit.toFixed(2)}, ${pct}% used. `;
+    if (remaining > 0) {
+      responseText += `\u00A3${remaining.toFixed(2)} left. `;
+    } else {
+      responseText += `\u00A3${Math.abs(remaining).toFixed(2)} over budget. `;
+    }
+    if (recent.length > 0) {
+      responseText += 'Recent: ' + recent.map((t) => `\u00A3${t.amount.toFixed(2)} ${t.description}`).join(', ') + '.';
+    } else {
+      responseText += 'No transactions this week.';
+    }
+
+    return {
+      functionName: 'get_category_detail',
+      success: true,
+      params,
+      data: { category: budgetCat, transactions: recent, remaining, pct },
+      responseText,
+      contentType: 'category_detail',
+      xpEarned: 0,
+    };
+  } catch {
+    return { functionName: 'get_category_detail', success: false, params, responseText: 'Failed to get category details.', xpEarned: 0 };
+  }
+}
+
+async function handleAdjustBudgetLimit(
+  params: Record<string, unknown>
+): Promise<FunctionCallResult> {
+  const category = params.category as string;
+  const direction = params.direction as 'increase' | 'decrease' | undefined;
+  const amount = (params.amount as number) || 5;
+
+  try {
+    const budgetCat = await getBudgetCategory(category);
+    if (!budgetCat) {
+      return { functionName: 'adjust_budget_limit', success: false, params, responseText: `Category "${category}" not found.`, xpEarned: 0 };
+    }
+    const categoryName = budgetCat.name.charAt(0).toUpperCase() + budgetCat.name.slice(1);
+
+    // If no direction specified, show current limit and ask
+    if (!direction) {
+      const remaining = budgetCat.weekly_limit - budgetCat.spent;
+      const transactions = await getTransactionsByCategory(category, 'weekly');
+      const recent = transactions.slice(0, 5);
+      return {
+        functionName: 'adjust_budget_limit',
+        success: true,
+        params,
+        data: { category: budgetCat, transactions: recent, remaining, pct: budgetCat.weekly_limit > 0 ? Math.round((budgetCat.spent / budgetCat.weekly_limit) * 100) : 0 },
+        responseText: `${categoryName} limit is \u00A3${budgetCat.weekly_limit.toFixed(2)} per week. \u00A3${budgetCat.spent.toFixed(2)} spent so far. Say "increase by 5" or "decrease by 5" to adjust.`,
+        contentType: 'category_detail',
+        xpEarned: 0,
+      };
+    }
+
+    const oldLimit = budgetCat.weekly_limit;
+    const delta = direction === 'increase' ? amount : -amount;
+    const newLimit = Math.max(0, oldLimit + delta);
+
+    await updateCategoryLimit(category, newLimit);
+
+    return {
+      functionName: 'adjust_budget_limit',
+      success: true,
+      params,
+      data: { category, oldLimit, newLimit },
+      responseText: `${categoryName} limit changed from \u00A3${oldLimit.toFixed(2)} to \u00A3${newLimit.toFixed(2)} per week.`,
+      contentType: 'category_detail',
+      xpEarned: 0,
+    };
+  } catch {
+    return { functionName: 'adjust_budget_limit', success: false, params, responseText: 'Failed to adjust budget limit.', xpEarned: 0 };
+  }
+}
+
+async function handleGetRecentTransactions(
+  params: Record<string, unknown>
+): Promise<FunctionCallResult> {
+  const count = (params.count as number) || 5;
+  try {
+    const transactions = await getRecentTransactions(count);
+    if (transactions.length === 0) {
+      return {
+        functionName: 'get_recent_transactions',
+        success: true,
+        params,
+        data: { transactions: [] },
+        responseText: "No transactions yet. Tell me what you've spent!",
+        xpEarned: 0,
+      };
+    }
+
+    const lines = transactions.map((t) => {
+      const day = new Date(t.timestamp).toLocaleDateString('en-GB', { weekday: 'short' });
+      return `\u00A3${t.amount.toFixed(2)} ${t.description} (${day})`;
+    });
+    const responseText = `Last ${transactions.length}: ${lines.join(', ')}.`;
+
+    return {
+      functionName: 'get_recent_transactions',
+      success: true,
+      params,
+      data: { transactions },
+      responseText,
+      contentType: 'transactions',
+      xpEarned: 0,
+    };
+  } catch {
+    return { functionName: 'get_recent_transactions', success: false, params, responseText: 'Failed to get transactions.', xpEarned: 0 };
+  }
+}
+
+async function handleGetQuestLog(
+  params: Record<string, unknown>
+): Promise<FunctionCallResult> {
+  try {
+    const active = await getActiveChallenges();
+    const completed = await getCompletedChallenges();
+    const profile = await getUserProfile();
+
+    let responseText = '';
+    if (active.length > 0) {
+      const questLines = active.map(
+        (c) => `"${c.title}" \u2014 ${c.progress}/${c.duration_days} days`
+      );
+      responseText = `Active quests: ${questLines.join('. ')}. `;
+    } else {
+      responseText = 'No active quests. ';
+    }
+    responseText += `${completed.length} completed. `;
+    if (profile) {
+      responseText += `Level ${profile.level}, ${profile.xp} care points.`;
+    }
+
+    return {
+      functionName: 'get_quest_log',
+      success: true,
+      params,
+      data: { active, completed, level: profile?.level ?? 1, xp: profile?.xp ?? 0 },
+      responseText,
+      contentType: 'quest_log',
+      xpEarned: 0,
+    };
+  } catch {
+    return { functionName: 'get_quest_log', success: false, params, responseText: 'Failed to get quest log.', xpEarned: 0 };
+  }
+}
+
+async function handleAcceptChallenge(
+  params: Record<string, unknown>
+): Promise<FunctionCallResult> {
+  try {
+    // Check if there's already an active challenge
+    const active = await getActiveChallenges();
+    if (active.length > 0) {
+      return {
+        functionName: 'accept_challenge',
+        success: false,
+        params,
+        responseText: `You already have an active quest: "${active[0].title}". Finish it first!`,
+        xpEarned: 0,
+      };
+    }
+
+    const challengeType = (params.challenge_type as string) || 'track_purchases';
+    const titles: Record<string, { title: string; desc: string }> = {
+      track_purchases: { title: 'Track every purchase', desc: 'Log every purchase for 3 days' },
+      reduce_spending: { title: 'Spend less this week', desc: 'Try to reduce your spending for 3 days' },
+      plan_budget: { title: 'Plan your budget', desc: 'Review and plan your budget for 3 days' },
+    };
+    const template = titles[challengeType] || titles.track_purchases;
+
+    await createChallenge({
+      title: template.title,
+      description: template.desc,
+      type: challengeType,
+      category: 'general',
+      duration_days: 3,
+      xp_reward: 30,
+    });
+    await updateUserXP(XP_AWARDS.ACCEPT_CHALLENGE);
+
+    return {
+      functionName: 'accept_challenge',
+      success: true,
+      params,
+      data: { title: template.title, duration: 3, xpReward: 30 },
+      responseText: `Challenge accepted! "${template.title}" \u2014 3 days for 30 care points. Let's do this!`,
+      contentType: 'quest_log',
+      xpEarned: XP_AWARDS.ACCEPT_CHALLENGE,
+    };
+  } catch {
+    return { functionName: 'accept_challenge', success: false, params, responseText: 'Failed to start challenge.', xpEarned: 0 };
+  }
+}
+
+async function handleCheckPetStatus(
+  params: Record<string, unknown>
+): Promise<FunctionCallResult> {
+  try {
+    const pet = await getPetProfile();
+    const health = await getPetHealth();
+    const profile = await getUserProfile();
+
+    const petName = pet?.name ?? 'Buddy';
+    const mood = pet?.current_state ?? 'neutral';
+    const tier = pet?.evolution_tier ?? 'egg';
+    const streak = profile?.streak_days ?? 0;
+
+    const moodLabel = mood.charAt(0).toUpperCase() + mood.slice(1);
+    const tierLabel = tier.charAt(0).toUpperCase() + tier.slice(1);
+
+    return {
+      functionName: 'check_pet_status',
+      success: true,
+      params,
+      data: { petName, mood, health, tier, streak },
+      responseText: `${petName} is ${moodLabel} with ${health} health points. ${streak}-day streak. Stage: ${tierLabel}.`,
+      contentType: 'pet_status',
+      xpEarned: 0,
+    };
+  } catch {
+    return { functionName: 'check_pet_status', success: false, params, responseText: 'Failed to check pet status.', xpEarned: 0 };
+  }
+}
+
+async function handleGetMoodHistory(
+  params: Record<string, unknown>
+): Promise<FunctionCallResult> {
+  const days = (params.days as number) || 7;
+  try {
+    const history = await getPetStateHistory(days);
+    const pet = await getPetProfile();
+    const petName = pet?.name ?? 'Buddy';
+
+    if (history.length === 0) {
+      return {
+        functionName: 'get_mood_history',
+        success: true,
+        params,
+        data: { history: [], petName },
+        responseText: `${petName} doesn't have much history yet. Keep logging to build it up!`,
+        xpEarned: 0,
+      };
+    }
+
+    // Group by day, take last entry per day
+    const byDay = new Map<string, { day: string; state: string }>();
+    for (const entry of history) {
+      const date = new Date(entry.timestamp);
+      const dayKey = date.toLocaleDateString('en-GB', { weekday: 'short' });
+      byDay.set(date.toDateString(), { day: dayKey, state: entry.state });
+    }
+    const dailyMoods = Array.from(byDay.values()).slice(0, 7);
+
+    const moodLine = dailyMoods.map((d) => `${d.day} ${d.state}`).join(', ');
+    const states = dailyMoods.map((d) => d.state);
+    const moodOrder = ['critical', 'worried', 'neutral', 'happy', 'thriving'];
+    const avgIndex = Math.round(states.reduce((sum, s) => sum + moodOrder.indexOf(s), 0) / states.length);
+    const avgMood = moodOrder[Math.max(0, Math.min(avgIndex, 4))];
+
+    return {
+      functionName: 'get_mood_history',
+      success: true,
+      params,
+      data: { history: dailyMoods, avgMood, petName },
+      responseText: `${petName}'s week: ${moodLine}. Average: ${avgMood}.`,
+      contentType: 'mood_history',
+      xpEarned: 0,
+    };
+  } catch {
+    return { functionName: 'get_mood_history', success: false, params, responseText: 'Failed to get mood history.', xpEarned: 0 };
+  }
+}
+
+async function handleGetSavingsProjection(
+  params: Record<string, unknown>
+): Promise<FunctionCallResult> {
+  const dailyAmount = params.daily_amount as number;
+  const period = params.period as string;
+
+  const multipliers: Record<string, number> = { weekly: 7, monthly: 30, yearly: 365 };
+  const multiplier = multipliers[period] || 30;
+  const savings = dailyAmount * multiplier;
+
+  const weekly = dailyAmount * 7;
+  const monthly = dailyAmount * 30;
+  const yearly = dailyAmount * 365;
 
   return {
-    functionName: 'navigate_to_screen',
+    functionName: 'get_savings_projection',
     success: true,
     params,
-    data: { screen },
-    responseText: '',
+    data: { dailyAmount, weekly, monthly, yearly },
+    responseText: `\u00A3${dailyAmount.toFixed(2)} a day adds up to \u00A3${weekly.toFixed(2)} a week, \u00A3${monthly.toFixed(2)} a month, and \u00A3${yearly.toFixed(2)} a year.`,
+    contentType: 'savings_projection',
+    xpEarned: 0,
+  };
+}
+
+async function handleGetHelp(
+  _params: Record<string, unknown>
+): Promise<FunctionCallResult> {
+  // Build contextual help
+  let contextHint = '';
+  try {
+    const categories = await getBudgetCategories();
+    const tight = categories.find((c) => c.spent / c.weekly_limit > 0.8);
+    if (tight) {
+      const name = tight.name.charAt(0).toUpperCase() + tight.name.slice(1);
+      contextHint = ` Right now your ${name} budget is getting tight \u2014 try asking about it.`;
+    }
+    const active = await getActiveChallenges();
+    if (active.length > 0) {
+      contextHint += ` You've got an active quest \u2014 ask about your progress.`;
+    }
+  } catch {}
+
+  const commands = [
+    '"spent 5 on coffee"',
+    '"how\'s my budget?"',
+    '"tell me about food"',
+    '"increase coffee by 5"',
+    '"show my quests"',
+    '"start a challenge"',
+    '"how\'s Buddy?"',
+    '"what did I spend?"',
+    '"if I save 3 a day"',
+  ];
+
+  return {
+    functionName: 'get_help',
+    success: true,
+    params: _params,
+    data: { commands },
+    responseText: `You can tell me what you spent, ask about your budget, check on quests, or ask how I'm doing.${contextHint}`,
+    contentType: 'help',
+    xpEarned: 0,
+  };
+}
+
+function handleOpenSettings(
+  _params: Record<string, unknown>
+): FunctionCallResult {
+  return {
+    functionName: 'open_settings',
+    success: true,
+    params: _params,
+    responseText: 'Opening settings.',
     xpEarned: 0,
   };
 }

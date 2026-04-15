@@ -19,6 +19,7 @@ export default function DoneScreen() {
   const { data } = useOnboarding();
   const { refresh } = useAuth();
   const [isWriting, setIsWriting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const petName = data.petName || 'Buddy';
   const plan = getPlanById(data.selectedPlanId);
@@ -42,13 +43,16 @@ export default function DoneScreen() {
   const handleStart = async () => {
     if (isWriting) return;
     setIsWriting(true);
+    setError(null);
     try {
       await writeOnboardingData(data);
       await refresh();
       router.replace('/(tabs)/');
     } catch (err) {
-      console.error('Failed to write onboarding data:', err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('Failed to write onboarding data:', msg);
       Speech.speak('Something went wrong. Please try again.', { rate: 1.0 });
+      setError(msg);
       setIsWriting(false);
     }
   };
@@ -58,7 +62,7 @@ export default function DoneScreen() {
       style={[styles.container, { backgroundColor: theme.colors.base.background }]}
     >
       <View style={styles.inner}>
-        <OnboardingProgress currentStep={8} totalSteps={8} />
+        <OnboardingProgress currentStep={9} totalSteps={9} />
 
         <View style={styles.content}>
           {/* Pet hatches! */}
@@ -72,7 +76,7 @@ export default function DoneScreen() {
             style={styles.bubbleWrap}
           >
             <SpeechBubble
-              message={`Hi! I'm ${petName}! Let's figure out this money thing together!`}
+              message={`Hi! I'm ${petName}! Just talk to me \u2014 say things like "spent 5 on coffee" or "how's my budget". I'll handle the rest!`}
             />
           </Animated.View>
 
@@ -207,6 +211,19 @@ export default function DoneScreen() {
               {isWriting ? 'Setting up...' : "Let's go!"}
             </Text>
           </Pressable>
+          {error && (
+            <Text
+              style={[
+                styles.errorText,
+                {
+                  color: theme.colors.petStates.critical?.medium ?? '#FF6B6B',
+                  fontFamily: monoFont,
+                },
+              ]}
+            >
+              {'> ERR: '}{error}
+            </Text>
+          )}
         </Animated.View>
       </View>
     </SafeAreaView>
@@ -272,5 +289,11 @@ const styles = StyleSheet.create({
   ctaText: {
     fontSize: 18,
     fontWeight: '700',
+  },
+  errorText: {
+    fontSize: 13,
+    lineHeight: 20,
+    textAlign: 'center',
+    marginTop: 12,
   },
 });

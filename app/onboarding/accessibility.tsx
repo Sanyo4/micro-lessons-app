@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { View, Text, Pressable, Switch, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -6,6 +6,7 @@ import * as Speech from 'expo-speech';
 import { router } from 'expo-router';
 import OnboardingProgress from '../../components/OnboardingProgress';
 import { useOnboarding } from '../../services/onboardingContext';
+import { useVoiceOnboarding } from '../../hooks/useVoiceOnboarding';
 import { useTheme } from '../../theme';
 
 interface AccessibilityPref {
@@ -48,32 +49,57 @@ export default function AccessibilityScreen() {
     reducedAnimations: false,
   });
 
-  const togglePref = (key: string) => {
-    const newValue = !prefs[key];
-    setPrefs((prev) => ({ ...prev, [key]: newValue }));
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  const togglePref = useCallback((key: string) => {
+    setPrefs((prev) => {
+      const newValue = !prev[key];
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-    const pref = PREFS.find((p) => p.key === key);
-    if (pref) {
-      Speech.speak(`${pref.label} ${newValue ? 'on' : 'off'}`, { rate: 1.0 });
-    }
+      const pref = PREFS.find((p) => p.key === key);
+      if (pref) {
+        Speech.speak(`${pref.label} ${newValue ? 'on' : 'off'}`, { rate: 1.0 });
+      }
 
-    // Apply to theme in real time so the user sees the effect
-    if (key === 'highContrast') {
-      theme.updateAccessibility({ highContrast: newValue });
-    } else if (key === 'largerText') {
-      theme.updateAccessibility({ textSize: newValue ? 'large' : 'medium' });
-    } else if (key === 'simplifiedLanguage') {
-      theme.updateAccessibility({ simplifiedLanguage: newValue });
-    } else if (key === 'reducedAnimations') {
-      theme.updateAccessibility({ reducedMotion: newValue });
-    }
-  };
+      // Apply to theme in real time so the user sees the effect
+      if (key === 'highContrast') {
+        theme.updateAccessibility({ highContrast: newValue });
+      } else if (key === 'largerText') {
+        theme.updateAccessibility({ textSize: newValue ? 'large' : 'medium' });
+      } else if (key === 'simplifiedLanguage') {
+        theme.updateAccessibility({ simplifiedLanguage: newValue });
+      } else if (key === 'reducedAnimations') {
+        theme.updateAccessibility({ reducedMotion: newValue });
+      }
 
-  const handleContinue = () => {
+      return { ...prev, [key]: newValue };
+    });
+  }, [theme]);
+
+  const handleContinue = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     router.push('/onboarding/pin-setup');
-  };
+  }, []);
+
+  useVoiceOnboarding({
+    instruction: "Accessibility settings. Say 'high contrast', 'larger text', 'simple language', or 'reduce motion' to toggle. Say 'continue' when done.",
+    keywords: {
+      'high contrast': () => togglePref('highContrast'),
+      'contrast': () => togglePref('highContrast'),
+      'larger text': () => togglePref('largerText'),
+      'large text': () => togglePref('largerText'),
+      'big text': () => togglePref('largerText'),
+      'simple language': () => togglePref('simplifiedLanguage'),
+      'simplified': () => togglePref('simplifiedLanguage'),
+      'simple': () => togglePref('simplifiedLanguage'),
+      'reduce motion': () => togglePref('reducedAnimations'),
+      'reduce animations': () => togglePref('reducedAnimations'),
+      'less motion': () => togglePref('reducedAnimations'),
+      'continue': () => handleContinue(),
+      'done': () => handleContinue(),
+      'next': () => handleContinue(),
+      'skip': () => handleContinue(),
+    },
+    enabled: true,
+  });
 
   const monoFont = theme.fontsLoaded
     ? theme.fonts.monospace
@@ -84,7 +110,7 @@ export default function AccessibilityScreen() {
       style={[styles.container, { backgroundColor: theme.colors.base.background }]}
     >
       <View style={styles.inner}>
-        <OnboardingProgress currentStep={6} totalSteps={8} />
+        <OnboardingProgress currentStep={6} totalSteps={9} />
 
         <Text
           style={[

@@ -55,7 +55,7 @@ export default function VoiceFlexibleScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.inner}>
-        <OnboardingProgress currentStep={3} totalSteps={8} />
+        <OnboardingProgress currentStep={3} totalSteps={9} />
 
         <Text style={styles.title} accessibilityRole="header">Flexible Budget</Text>
         <Text style={styles.subtitle}>How much for groceries, transport, dining, shopping?</Text>

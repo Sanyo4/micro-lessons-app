@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { getAppSettings, createAppSettings, updateAppSettings, resetApp as dbResetApp } from './database';
 import { hashPin } from '../utils/pin';
 
@@ -7,8 +8,12 @@ interface AuthContextType {
   isNewUser: boolean;
   isOnboarded: boolean;
   isLoading: boolean;
+  hasBiometrics: boolean;
+  biometricType: 'fingerprint' | 'facial' | 'none';
   login: (pin: string) => Promise<boolean>;
+  loginWithBiometrics: () => Promise<boolean>;
   setupPin: (pin: string) => Promise<void>;
+  setupBiometrics: () => Promise<boolean>;
   logout: () => void;
   resetApp: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -21,6 +26,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isNewUser, setIsNewUser] = useState(true);
   const [isOnboarded, setIsOnboarded] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [hasBiometrics, setHasBiometrics] = useState(false);
+  const [biometricType, setBiometricType] = useState<'fingerprint' | 'facial' | 'none'>('none');
 
   const refresh = useCallback(async () => {
     try {
@@ -40,9 +47,66 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Detect biometric hardware on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const hasHw = await LocalAuthentication.hasHardwareAsync();
+        const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+        setHasBiometrics(hasHw && isEnrolled);
+        if (hasHw && isEnrolled) {
+          const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
+          if (types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) {
+            setBiometricType('facial');
+          } else if (types.includes(LocalAuthentication.AuthenticationType.FINGERPRINT)) {
+            setBiometricType('fingerprint');
+          }
+        }
+      } catch {}
+    })();
+  }, []);
+
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  const loginWithBiometrics = useCallback(async (): Promise<boolean> => {
+    try {
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Authenticate to continue',
+        cancelLabel: 'Use PIN',
+        disableDeviceFallback: true,
+      });
+      if (result.success) {
+        setIsAuthenticated(true);
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const setupBiometrics = useCallback(async (): Promise<boolean> => {
+    try {
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Set up biometric login',
+        cancelLabel: 'Skip',
+        disableDeviceFallback: true,
+      });
+      if (result.success) {
+        // Mark biometric as enabled in app settings
+        const settings = await getAppSettings();
+        if (settings) {
+          await updateAppSettings({ biometric_enabled: 1 } as any);
+        }
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }, []);
 
   const login = useCallback(async (pin: string): Promise<boolean> => {
     const settings = await getAppSettings();
@@ -82,8 +146,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isNewUser,
       isOnboarded,
       isLoading,
+      hasBiometrics,
+      biometricType,
       login,
+      loginWithBiometrics,
       setupPin,
+      setupBiometrics,
       logout,
       resetApp,
       refresh,

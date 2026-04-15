@@ -129,3 +129,24 @@ export async function playFullPetFeedback(
     });
   }
 }
+
+// === Voice-First Helpers ===
+
+/**
+ * Stop all audio output immediately — used when mic is pressed.
+ */
+export function stopAllAudio(): void {
+  Speech.stop();
+}
+
+/**
+ * Speak a function result with appropriate rate/pitch.
+ */
+export function speakFunctionResult(responseText: string): void {
+  if (!responseText) return;
+  Speech.speak(responseText, {
+    language: 'en-US',
+    rate: 0.9,
+    pitch: 1.0,
+  });
+}

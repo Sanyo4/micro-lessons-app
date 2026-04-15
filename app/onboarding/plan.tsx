@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useCallback } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -6,6 +6,7 @@ import * as Speech from 'expo-speech';
 import { router } from 'expo-router';
 import OnboardingProgress from '../../components/OnboardingProgress';
 import { useOnboarding } from '../../services/onboardingContext';
+import { useVoiceOnboarding } from '../../hooks/useVoiceOnboarding';
 import { useTheme } from '../../theme';
 import { scorePlans, getTopPlans, type FinancialPlan } from '../../data/plans';
 
@@ -26,19 +27,59 @@ export default function PlanScreen() {
   const [selectedId, setSelectedId] = useState<string>(
     data.selectedPlanId || recommendedId,
   );
+  const autoContinueTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleSelect = (plan: FinancialPlan) => {
+  const handleSelect = useCallback((plan: FinancialPlan) => {
     setSelectedId(plan.id);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     Speech.speak(plan.title, { rate: 0.95 });
-  };
+  }, []);
 
-  const handleContinue = () => {
+  const handleContinue = useCallback(() => {
     if (!selectedId) return;
     updateData({ selectedPlanId: selectedId });
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     router.push('/onboarding/accessibility');
-  };
+  }, [selectedId, updateData]);
+
+  const handleVoiceSelectPlan = useCallback((index: number) => {
+    const plan = topPlans[index];
+    if (!plan) return;
+    handleSelect(plan);
+    if (autoContinueTimer.current) clearTimeout(autoContinueTimer.current);
+    autoContinueTimer.current = setTimeout(() => {
+      updateData({ selectedPlanId: plan.id });
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      router.push('/onboarding/accessibility');
+    }, 1500);
+  }, [topPlans, handleSelect, updateData]);
+
+  // Build voice keywords from plan titles
+  const voiceKeywords = useMemo(() => {
+    const kw: Record<string, () => void> = {
+      'first': () => handleVoiceSelectPlan(0),
+      'one': () => handleVoiceSelectPlan(0),
+      '1': () => handleVoiceSelectPlan(0),
+      'second': () => handleVoiceSelectPlan(1),
+      'two': () => handleVoiceSelectPlan(1),
+      '2': () => handleVoiceSelectPlan(1),
+    };
+    // Add keywords from each plan's title words
+    topPlans.forEach((plan, index) => {
+      plan.title.toLowerCase().split(/\s+/).forEach((word) => {
+        if (word.length > 2) {
+          kw[word] = () => handleVoiceSelectPlan(index);
+        }
+      });
+    });
+    return kw;
+  }, [topPlans, handleVoiceSelectPlan]);
+
+  useVoiceOnboarding({
+    instruction: `Choose a plan. Say 'first' for ${topPlans[0]?.title}, or 'second' for ${topPlans[1]?.title}.`,
+    keywords: voiceKeywords,
+    enabled: true,
+  });
 
   const monoFont = theme.fontsLoaded
     ? theme.fonts.monospace
@@ -49,7 +90,7 @@ export default function PlanScreen() {
       style={[styles.container, { backgroundColor: theme.colors.base.background }]}
     >
       <View style={styles.inner}>
-        <OnboardingProgress currentStep={5} totalSteps={8} />
+        <OnboardingProgress currentStep={5} totalSteps={9} />
 
         <Text
           style={[

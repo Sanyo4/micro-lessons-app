@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -15,22 +15,44 @@ import { useTheme } from '../../theme';
 import { useOnboarding } from '../../services/onboardingContext';
 import { getPetArt } from '../../assets/pet';
 import SpeechBubble from '../../components/pet/SpeechBubble';
+import { useVoiceOnboarding } from '../../hooks/useVoiceOnboarding';
 
 export default function WelcomeScreen() {
   const theme = useTheme();
   const { data, updateData } = useOnboarding();
   const [petName, setPetName] = useState(data.petName === 'Buddy' ? '' : data.petName);
+  const hasAutoSubmitted = useRef(false);
 
   const eggLines = getPetArt('egg');
   const monoFont = theme.fontsLoaded ? theme.fonts.monospace : theme.fonts.monospaceFallback;
   const headingFont = theme.fontsLoaded ? theme.fonts.heading : theme.fonts.headingFallback;
   const canContinue = petName.trim().length > 0;
 
-  const handleContinue = () => {
-    if (!canContinue) return;
+  const handleContinue = useCallback(() => {
+    if (petName.trim().length === 0) return;
     updateData({ petName: petName.trim() });
     router.push('/onboarding/questions');
-  };
+  }, [petName, updateData]);
+
+  const { isListening, transcript } = useVoiceOnboarding({
+    instruction: "Something's hatching! Give it a name. Shake your phone and say a name.",
+    keywords: {
+      '*': (text?: string) => {
+        if (!text) return;
+        const firstName = text.trim().split(/\s+/)[0];
+        if (firstName && !hasAutoSubmitted.current) {
+          hasAutoSubmitted.current = true;
+          setPetName(firstName);
+          // Auto-continue after a short delay so user sees the name appear
+          setTimeout(() => {
+            updateData({ petName: firstName });
+            router.push('/onboarding/questions');
+          }, 600);
+        }
+      },
+    },
+    enabled: true,
+  });
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.base.background }]}>
@@ -135,6 +157,22 @@ export default function WelcomeScreen() {
               />
             </View>
           </View>
+
+          {/* Voice listening indicator */}
+          {isListening && (
+            <Text
+              style={{
+                color: theme.colors.petStates.thriving.light,
+                fontFamily: monoFont,
+                fontSize: theme.typeScale.terminalSmall,
+                textAlign: 'center',
+                marginTop: theme.spacing.sm,
+                opacity: 0.9,
+              }}
+            >
+              {transcript ? `> heard: "${transcript}"` : '> listening...'}
+            </Text>
+          )}
 
           {/* Continue button */}
           <Pressable

@@ -91,7 +91,7 @@ export default function SpeechBubble({ message, onAnimationComplete }: SpeechBub
       <View
         style={[
           styles.tail,
-          { borderBottomColor: theme.colors.base.surface },
+          { borderBottomColor: theme.colors.base.terminal },
         ]}
       />
 
@@ -104,26 +104,26 @@ export default function SpeechBubble({ message, onAnimationComplete }: SpeechBub
         style={[
           styles.bubble,
           {
-            backgroundColor: theme.colors.base.surface,
-            borderRadius: theme.radius.lg,
+            backgroundColor: theme.colors.base.terminal,
+            borderRadius: theme.radius.terminal,
             padding: theme.spacing.lg,
           },
-          theme.shadows.sm,
         ]}
       >
         <Text
           style={[
             styles.text,
             {
-              color: theme.colors.base.textPrimary,
-              fontFamily: theme.fontsLoaded ? theme.fonts.body : undefined,
-              fontSize: theme.typeScale.bodyLarge,
-              lineHeight: theme.typeScale.bodyLarge * theme.lineHeight.normal,
+              color: theme.colors.base.terminalText,
+              fontFamily: theme.fontsLoaded ? theme.fonts.monospace : theme.fonts.monospaceFallback,
+              fontSize: theme.typeScale.terminal,
+              lineHeight: theme.typeScale.terminal * theme.lineHeight.relaxed,
             },
           ]}
         >
+          {'> '}
           {displayedText}
-          {isAnimating && <Text style={styles.cursor}>|</Text>}
+          {isAnimating && <Text style={styles.cursor}>_</Text>}
         </Text>
       </Pressable>
     </View>

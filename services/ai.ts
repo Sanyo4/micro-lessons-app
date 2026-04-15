@@ -6,9 +6,19 @@ import {
 } from 'cactus-react-native';
 
 import { getUserFacingFunctions } from '../data/functionDefs';
-import { executeFunctionCall, type FunctionCallResult } from './functionExecutor';
-import { getBudgetCategories, getAppSettings, type BudgetCategory } from './database';
+import { executeFunctionCall, type FunctionCallResult, type ContentType } from './functionExecutor';
+import { getBudgetCategories, getBudgetCategory, getAppSettings, type BudgetCategory } from './database';
 import { getPlanById } from '../data/plans';
+import { conversationContext, type ContextResult } from './conversationContext';
+
+export interface PendingTransaction {
+  amount: number;
+  category: string;
+  categoryName: string;
+  description: string;
+  budgetSpent: number;
+  budgetLimit: number;
+}
 
 export interface AIResult {
   responseText: string;
@@ -29,7 +39,10 @@ export interface AIResult {
     };
   } | null;
   xpEarned: number;
-  navigateTo?: string | null;
+  contentType?: ContentType;
+  pendingTransaction?: PendingTransaction | null;
+  game?: string | null;
+  lessonAction?: 'accept' | 'dismiss';
 }
 
 const PERSONA_PROMPTS: Record<string, string> = {
@@ -70,19 +83,27 @@ class GemmaAIService {
     return this.isInitialized;
   }
 
-  async processUserInput(userText: string): Promise<AIResult> {
+  /**
+   * Phase 1: Parse user input and identify function calls.
+   * Executes non-transaction functions immediately.
+   * Defers log_transaction for user confirmation.
+   */
+  async parseUserInput(userText: string): Promise<AIResult> {
+    // Check conversation context first (confirmation, games)
+    const contextResult = conversationContext.intercept(userText);
+    if (contextResult.handled) {
+      return this.contextResultToAIResult(contextResult);
+    }
+
     const budgetState = await getBudgetCategories();
     const categoryIds = budgetState.map((c) => c.id);
     const budgetContext = this.buildBudgetContext(budgetState);
 
-    // Load persona for system prompt
     const settings = await getAppSettings();
     const personaPrompt = PERSONA_PROMPTS[settings?.financial_persona || 'beginner'] || PERSONA_PROMPTS.beginner;
 
-    // Get dynamic function defs based on actual categories
     const userFunctions = getUserFacingFunctions(categoryIds);
 
-    // Convert our function definitions to Cactus Tool format
     const tools: CactusLMTool[] = userFunctions.map((fn) => ({
       name: fn.name,
       description: fn.description,
@@ -104,8 +125,16 @@ class GemmaAIService {
         content: `You are a financial assistant for a budgeting app. Parse the user's natural language input and call the appropriate function.
 
 When the user reports spending, call log_transaction with the category, amount, and description.
-When the user asks to see their budget, lessons, or challenges, call navigate_to_screen.
-When the user asks about their spending, call check_budget_status or get_spending_summary.
+When the user asks about their overall budget, call get_budget_overview.
+When the user asks about a specific category, call get_category_detail or check_budget_status.
+When the user wants to change a budget limit, call adjust_budget_limit.
+When the user asks what they spent recently, call get_recent_transactions.
+When the user asks about quests or challenges, call get_quest_log.
+When the user wants to start a challenge, call accept_challenge.
+When the user asks about their pet, call check_pet_status.
+When the user asks about mood history, call get_mood_history.
+When the user asks about savings potential, call get_savings_projection.
+When the user asks for help or what they can do, call get_help.
 
 ${personaPrompt}
 
@@ -135,17 +164,34 @@ ${budgetContext}`,
       let responseText = result.response || '';
       let totalXP = 0;
       let lessonResult: AIResult['lesson'] = null;
-      let navigateTo: string | null = null;
+      let contentType: ContentType | undefined;
+      let pendingTransaction: PendingTransaction | null = null;
 
-      // Execute any function calls from the model
       if (result.functionCalls && result.functionCalls.length > 0) {
         for (const call of result.functionCalls) {
-          // Handle navigation separately
-          if (call.name === 'navigate_to_screen') {
-            navigateTo = (call.arguments as Record<string, unknown>).screen as string;
+          // Defer log_transaction for confirmation
+          if (call.name === 'log_transaction') {
+            const args = call.arguments as Record<string, unknown>;
+            const category = args.category as string;
+            const amount = args.amount as number;
+            const description = args.description as string || category;
+
+            // Look up budget info for the confirmation sheet
+            const budgetCat = await getBudgetCategory(category);
+            const catName = budgetState.find(c => c.id === category)?.name || category;
+
+            pendingTransaction = {
+              amount,
+              category,
+              categoryName: catName,
+              description,
+              budgetSpent: budgetCat?.spent ?? 0,
+              budgetLimit: budgetCat?.weekly_limit ?? 0,
+            };
             continue;
           }
 
+          // Execute non-transaction functions immediately
           const fnResult = await executeFunctionCall({
             name: call.name,
             arguments: call.arguments as Record<string, unknown>,
@@ -156,45 +202,76 @@ ${budgetContext}`,
           if (fnResult.lesson) {
             lessonResult = fnResult.lesson;
           }
-
           if (fnResult.responseText) {
             responseText = fnResult.responseText;
           }
+          if (fnResult.contentType) {
+            contentType = fnResult.contentType;
+          }
         }
-
       } else {
-        // Model returned no function calls despite forceTools — use fallback
         return this.fallbackParse(userText);
       }
 
-      // Build a friendly response if we don't have one
       if (!responseText && executedFunctions.length > 0) {
         responseText = this.buildResponseText(executedFunctions);
       }
 
-      // If navigating, no need for response text
-      if (navigateTo) {
-        return {
-          responseText: responseText || '',
-          executedFunctions,
-          lesson: lessonResult,
-          xpEarned: totalXP,
-          navigateTo,
-        };
+      // If there's a pending transaction, start the confirmation flow
+      if (pendingTransaction) {
+        conversationContext.startConfirmation(pendingTransaction);
+        contentType = 'confirmation';
       }
 
       return {
-        responseText: responseText || "I couldn't quite understand that. Try something like \"spent 5 quid on coffee\" or \"show my budget\".",
+        responseText: responseText || '',
         executedFunctions,
         lesson: lessonResult,
         xpEarned: totalXP,
-        navigateTo: null,
+        contentType,
+        pendingTransaction,
       };
     } catch (error) {
       console.error('AI processing error:', error);
-      // Fallback: try to parse manually
       return this.fallbackParse(userText);
     }
+  }
+
+  /**
+   * Phase 2: Execute a confirmed transaction.
+   * Called after user confirms in the ConfirmationSheet.
+   */
+  async executeConfirmedTransaction(pending: PendingTransaction): Promise<AIResult> {
+    const fnResult = await executeFunctionCall({
+      name: 'log_transaction',
+      arguments: {
+        category: pending.category,
+        amount: pending.amount,
+        description: pending.description,
+      },
+    });
+
+    // Start game flow if triggered
+    if (fnResult.game) {
+      conversationContext.startGame(fnResult.game as 'needs_vs_wants' | 'bnpl');
+    }
+
+    return {
+      responseText: fnResult.responseText || `Logged \u00A3${pending.amount.toFixed(2)} to ${pending.categoryName}`,
+      executedFunctions: [fnResult],
+      lesson: fnResult.lesson || null,
+      xpEarned: fnResult.xpEarned,
+      contentType: fnResult.game ? (fnResult.game === 'needs_vs_wants' ? 'game_needs_vs_wants' : 'game_bnpl') : undefined,
+      game: fnResult.game || null,
+    };
+  }
+
+  /**
+   * Legacy method — calls parseUserInput for backward compatibility.
+   * @deprecated Use parseUserInput + executeConfirmedTransaction instead.
+   */
+  async processUserInput(userText: string): Promise<AIResult> {
+    return this.parseUserInput(userText);
   }
 
   async checkTimeTriggers(): Promise<AIResult | null> {
@@ -214,18 +291,30 @@ ${budgetContext}`,
         executedFunctions: [fnResult],
         lesson: fnResult.lesson,
         xpEarned: fnResult.xpEarned,
-        navigateTo: null,
       };
     }
 
     return null;
   }
 
+  private contextResultToAIResult(ctx: ContextResult): AIResult {
+    return {
+      responseText: ctx.responseText || '',
+      executedFunctions: [],
+      lesson: null,
+      xpEarned: ctx.xpEarned || 0,
+      contentType: ctx.contentType,
+      pendingTransaction: ctx.executeTransaction || null,
+      game: ctx.gameState?.type || null,
+      lessonAction: ctx.lessonAction,
+    };
+  }
+
   private buildBudgetContext(categories: BudgetCategory[]): string {
     return categories
       .map(
         (cat) =>
-          `- ${cat.name} (${cat.icon}): £${cat.spent.toFixed(2)} / £${cat.weekly_limit.toFixed(2)} ${cat.spent > cat.weekly_limit ? '⚠️ EXCEEDED' : cat.spent > cat.weekly_limit * 0.8 ? '⚠️ Near limit' : '✅ OK'}`
+          `- ${cat.name} (${cat.icon}): \u00A3${cat.spent.toFixed(2)} / \u00A3${cat.weekly_limit.toFixed(2)} ${cat.spent > cat.weekly_limit ? '\u26A0\uFE0F EXCEEDED' : cat.spent > cat.weekly_limit * 0.8 ? '\u26A0\uFE0F Near limit' : '\u2705 OK'}`
       )
       .join('\n');
   }
@@ -234,28 +323,62 @@ ${budgetContext}`,
     const logFn = executedFunctions.find((f) => f.functionName === 'log_transaction');
     if (logFn && logFn.success) {
       const params = logFn.params as Record<string, unknown>;
-      return `Got it — £${params.amount} ${params.description} logged to ${(params.category as string).charAt(0).toUpperCase() + (params.category as string).slice(1)}`;
+      return `Got it \u2014 \u00A3${params.amount} ${params.description} logged to ${(params.category as string).charAt(0).toUpperCase() + (params.category as string).slice(1)}`;
     }
     return '';
   }
 
   private async fallbackParse(userText: string): Promise<AIResult> {
-    // Check for navigation intents first
     const lowerText = userText.toLowerCase();
-    const navKeywords: Record<string, string[]> = {
-      budget: ['budget', 'budgets', 'spending', 'how much'],
-      lessons: ['lesson', 'lessons', 'learn', 'teach'],
-      challenges: ['challenge', 'challenges'],
-    };
 
-    for (const [screen, keywords] of Object.entries(navKeywords)) {
-      if (keywords.some((kw) => lowerText.includes(kw))) {
+    // Fallback: check for adjust/increase/decrease + category first (before generic "budget")
+    const adjustKeywords = ['adjust', 'change limit', 'increase', 'decrease', 'raise', 'lower'];
+    if (adjustKeywords.some((kw) => lowerText.includes(kw))) {
+      const cats = await getBudgetCategories();
+      const matchedCat = cats.find((c) => lowerText.includes(c.name.toLowerCase()) || lowerText.includes(c.id.toLowerCase()));
+      if (matchedCat) {
+        const direction = lowerText.includes('increase') || lowerText.includes('raise') || lowerText.includes('more')
+          ? 'increase'
+          : lowerText.includes('decrease') || lowerText.includes('lower') || lowerText.includes('less') || lowerText.includes('reduce')
+            ? 'decrease'
+            : undefined;
+        const amountMatch = lowerText.match(/(?:by\s+)?(\d+(?:\.\d{1,2})?)/);
+        const args: Record<string, unknown> = { category: matchedCat.id };
+        if (direction) args.direction = direction;
+        if (amountMatch) args.amount = parseFloat(amountMatch[1]);
+
+        const fnResult = await executeFunctionCall({ name: 'adjust_budget_limit', arguments: args });
         return {
-          responseText: '',
-          executedFunctions: [],
+          responseText: fnResult.responseText || '',
+          executedFunctions: [fnResult],
           lesson: null,
-          xpEarned: 0,
-          navigateTo: screen,
+          xpEarned: fnResult.xpEarned,
+          contentType: fnResult.contentType,
+        };
+      }
+    }
+
+    // Fallback function routing via keywords
+    const functionKeywords: Array<{ fn: string; args: Record<string, unknown>; keywords: string[] }> = [
+      { fn: 'get_help', args: {}, keywords: ['help', 'what can i do', 'what can i say'] },
+      { fn: 'open_settings', args: {}, keywords: ['settings', 'open settings', 'preferences', 'edit name', 'rename'] },
+      { fn: 'get_budget_overview', args: {}, keywords: ['budget', 'budgets', 'how much left', 'overview'] },
+      { fn: 'get_quest_log', args: {}, keywords: ['quest', 'quests', 'challenge', 'challenges'] },
+      { fn: 'check_pet_status', args: {}, keywords: ['how is buddy', "how's buddy", 'pet status', 'how are you'] },
+      { fn: 'get_recent_transactions', args: {}, keywords: ['recent', 'last transactions', 'what did i spend', 'history'] },
+      { fn: 'get_mood_history', args: {}, keywords: ['mood history', 'mood', 'how has buddy been'] },
+      { fn: 'accept_challenge', args: {}, keywords: ['start a challenge', 'accept challenge', 'new quest', 'start quest'] },
+    ];
+
+    for (const route of functionKeywords) {
+      if (route.keywords.some((kw) => lowerText.includes(kw))) {
+        const fnResult = await executeFunctionCall({ name: route.fn, arguments: route.args });
+        return {
+          responseText: fnResult.responseText || '',
+          executedFunctions: [fnResult],
+          lesson: null,
+          xpEarned: fnResult.xpEarned,
+          contentType: fnResult.contentType,
         };
       }
     }
@@ -306,55 +429,36 @@ ${budgetContext}`,
     }
 
     if (amount && detectedCategory) {
-      const executedFunctions: FunctionCallResult[] = [];
-      let totalXP = 0;
-      let lessonResult: AIResult['lesson'] = null;
-      let responseText = '';
+      // Defer for confirmation instead of executing immediately
+      const budgetCat = await getBudgetCategory(detectedCategory);
+      const catName = categories.find(c => c.id === detectedCategory)?.name || detectedCategory;
+      const description = userText.replace(/[0-9.,£$]+/g, '').trim() || detectedCategory;
 
-      const logResult = await executeFunctionCall({
-        name: 'log_transaction',
-        arguments: { category: detectedCategory, amount, description: userText.replace(/[0-9.,£$]+/g, '').trim() || detectedCategory },
-      });
-      executedFunctions.push(logResult);
-      totalXP += logResult.xpEarned;
-      responseText = logResult.responseText || '';
-
-      if (logResult.success) {
-        const budgetResult = await executeFunctionCall({
-          name: 'check_budget_status',
-          arguments: { category: detectedCategory },
-        });
-        executedFunctions.push(budgetResult);
-
-        const budgetData = budgetResult.data as { exceeded?: boolean; percentage?: number } | undefined;
-        if (budgetData?.exceeded) {
-          const lessonFnResult = await executeFunctionCall({
-            name: 'get_micro_lesson',
-            arguments: { trigger_type: 'budget_exceeded', category: detectedCategory, severity: 'mild' },
-          });
-          executedFunctions.push(lessonFnResult);
-          totalXP += lessonFnResult.xpEarned;
-          if (lessonFnResult.lesson) {
-            lessonResult = lessonFnResult.lesson;
-          }
-        }
-      }
+      const pending: PendingTransaction = {
+        amount,
+        category: detectedCategory,
+        categoryName: catName,
+        description,
+        budgetSpent: budgetCat?.spent ?? 0,
+        budgetLimit: budgetCat?.weekly_limit ?? 0,
+      };
+      conversationContext.startConfirmation(pending);
 
       return {
-        responseText,
-        executedFunctions,
-        lesson: lessonResult,
-        xpEarned: totalXP,
-        navigateTo: null,
+        responseText: '',
+        executedFunctions: [],
+        lesson: null,
+        xpEarned: 0,
+        contentType: 'confirmation',
+        pendingTransaction: pending,
       };
     }
 
     return {
-      responseText: "I couldn't quite understand that. Try something like \"spent 5 quid on coffee\" or \"show my budget\".",
+      responseText: "I couldn't quite understand that. Try saying \"spent 5 on coffee\", \"how's my budget\", or \"help\".",
       executedFunctions: [],
       lesson: null,
       xpEarned: 0,
-      navigateTo: null,
     };
   }
 

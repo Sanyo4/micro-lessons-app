@@ -1,5 +1,5 @@
-// Brief 04 — Pet-centric home screen
-import { useState, useCallback, useRef, useEffect } from 'react';
+// Voice-first single-page layout — all interactions through pet terminal
+import { useState, useCallback, useReducer, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,28 +8,34 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, router } from 'expo-router';
-import Animated, { FadeIn, FadeInDown, SlideInDown, SlideOutDown } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import * as Speech from 'expo-speech';
 import PetTerminal from '../../components/pet/PetTerminal';
 import SpeechBubble from '../../components/pet/SpeechBubble';
-import ChatInput from '../../components/ChatInput';
-import VoiceInput from '../../components/VoiceInput';
+import SuggestionChips from '../../components/MenuChips';
+import VoiceControl from '../../components/VoiceControl';
+import DynamicContentArea, { type ContentState } from '../../components/DynamicContentArea';
 import MicroLessonModal from '../../components/MicroLessonModal';
 import XPPopup from '../../components/XPPopup';
+import HealthMeter from '../../components/pet/HealthMeter';
 import {
   getUserProfile,
   getPetProfile,
+  getPetHealth,
   createChallenge,
   updateUserXP,
   getBudgetCategories,
+  getRecentTransactions,
+  getActiveChallenges,
   type UserProfile,
   type PetProfile,
+  type Transaction,
 } from '../../services/database';
-import { aiService, type AIResult } from '../../services/ai';
+import { aiService, type AIResult, type PendingTransaction } from '../../services/ai';
+import { conversationContext } from '../../services/conversationContext';
 import { recalculatePetState, getCurrentPetState, type PetMood } from '../../services/petState';
 import { recordEngagement } from '../../services/engagement';
 import { checkEvolution } from '../../services/petEvolution';
@@ -38,7 +44,25 @@ import { resolveDialogue } from '../../services/petDialogue';
 import { playFullPetFeedback } from '../../services/audioFeedback';
 import { XP_AWARDS } from '../../utils/gamification';
 import { announceForScreenReader } from '../../utils/accessibility';
+import { getSuggestionChips, type ChipState } from '../../utils/suggestionChips';
+import { useShakeDetector } from '../../hooks/useShakeDetector';
 import { useTheme } from '../../theme';
+
+// Content state reducer
+type ContentAction =
+  | { type: 'SET_CONTENT'; payload: ContentState }
+  | { type: 'CLEAR' };
+
+function contentReducer(state: ContentState | null, action: ContentAction): ContentState | null {
+  switch (action.type) {
+    case 'SET_CONTENT':
+      return action.payload;
+    case 'CLEAR':
+      return null;
+    default:
+      return state;
+  }
+}
 
 export default function HomeScreen() {
   const theme = useTheme();
@@ -50,10 +74,22 @@ export default function HomeScreen() {
   const [dialogue, setDialogue] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isModelReady, setIsModelReady] = useState(false);
-  const [showTransactionSheet, setShowTransactionSheet] = useState(false);
-  const [inputMode, setInputMode] = useState<'voice' | 'text'>('text');
+  const [healthPoints, setHealthPoints] = useState(100);
 
-  // Lesson modal
+  // Dynamic content
+  const [contentState, dispatchContent] = useReducer(contentReducer, null);
+
+  // Suggestion chips
+  const [chips, setChips] = useState<string[]>(["how's my budget?", 'log spending', 'what can I do?']);
+
+  // Shake-to-talk
+  const [shakeTrigger, setShakeTrigger] = useState(0);
+  useShakeDetector({
+    onShake: () => setShakeTrigger((n) => n + 1),
+    enabled: !isProcessing,
+  });
+
+  // Lesson modal (kept as modal for now)
   const [showLesson, setShowLesson] = useState(false);
   const [currentLesson, setCurrentLesson] = useState<AIResult['lesson']>(null);
 
@@ -64,19 +100,40 @@ export default function HomeScreen() {
   });
 
   const loadData = useCallback(async () => {
-    const [p, pet] = await Promise.all([getUserProfile(), getPetProfile()]);
+    const [p, pet, hp] = await Promise.all([
+      getUserProfile(),
+      getPetProfile(),
+      getPetHealth(),
+    ]);
     setProfile(p);
     setPetProfile(pet);
+    setHealthPoints(hp);
     if (pet) {
       setPetState(pet.current_state as PetMood);
     }
+
+    // Update suggestion chips
+    try {
+      const cats = await getBudgetCategories();
+      const txns = await getRecentTransactions(1);
+      const active = await getActiveChallenges();
+      const today = new Date().toDateString();
+      const hasToday = txns.length > 0 && new Date(txns[0].timestamp).toDateString() === today;
+      const tight = cats
+        .filter((c) => c.weekly_limit > 0 && c.spent / c.weekly_limit > 0.8)
+        .map((c) => c.name);
+
+      const chipState: ChipState = {
+        hasTransactionsToday: hasToday,
+        tightCategories: tight,
+        hasActiveQuest: active.length > 0,
+        petName: pet?.name ?? 'Buddy',
+      };
+      setChips(getSuggestionChips(chipState));
+    } catch {}
   }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadData();
-    }, [loadData])
-  );
+  useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
 
   // Init AI on first mount
   useEffect(() => {
@@ -90,12 +147,31 @@ export default function HomeScreen() {
       setIsModelReady(true);
     }
 
-    // Daily check-in dialogue
+    // Daily check-in with contextual hint
     (async () => {
       try {
         const state = await getCurrentPetState();
         const reaction = getDailyCheckInReaction(state);
-        const text = await resolveDialogue(reaction.templateKey, reaction.slotValues);
+        let text = await resolveDialogue(reaction.templateKey, reaction.slotValues);
+
+        // Append contextual suggestion for discoverability
+        const cats = await getBudgetCategories();
+        const active = await getActiveChallenges();
+        const txns = await getRecentTransactions(1);
+        const today = new Date().toDateString();
+        const hasToday = txns.length > 0 && new Date(txns[0].timestamp).toDateString() === today;
+
+        if (!hasToday) {
+          text += " Tell me what you've spent today!";
+        } else if (active.length > 0) {
+          text += ' Ask me about your quest progress!';
+        } else {
+          const tight = cats.find((c) => c.weekly_limit > 0 && c.spent / c.weekly_limit > 0.8);
+          if (tight) {
+            text += ` Try saying "how's my budget?"`;
+          }
+        }
+
         if (mounted) setDialogue(text);
       } catch {}
     })();
@@ -104,7 +180,7 @@ export default function HomeScreen() {
     aiService.checkTimeTriggers().then((result) => {
       if (mounted && result?.lesson) {
         setCurrentLesson(result.lesson);
-        setTimeout(() => setShowLesson(true), 1500);
+        setTimeout(() => { setShowLesson(true); conversationContext.startLessonOffer(); }, 1500);
       }
     }).catch(() => {});
 
@@ -122,61 +198,72 @@ export default function HomeScreen() {
 
   const handleSend = async (text: string) => {
     setIsProcessing(true);
-    setShowTransactionSheet(false);
 
     try {
-      const result = await aiService.processUserInput(text);
+      const result = await aiService.parseUserInput(text);
 
-      // Handle navigation
-      if (result.navigateTo) {
-        const routeMap: Record<string, string> = {
-          budget: '/budget',
-          lessons: '/lessons',
-          challenges: '/challenges',
-          home: '/',
-          history: '/history',
-        };
-        const route = routeMap[result.navigateTo];
-        if (route && route !== '/') {
-          router.navigate(route as '/budget' | '/lessons' | '/challenges' | '/history');
+      // Handle lesson accept/dismiss from voice
+      if (result.lessonAction) {
+        if (result.lessonAction === 'accept') {
+          await handleAcceptChallenge();
+        } else {
+          setShowLesson(false);
+          setDialogue(result.responseText || 'No worries, maybe next time!');
         }
         setIsProcessing(false);
         return;
       }
 
-      // Refresh profile
-      await loadData();
+      // Handle settings navigation
+      if (result.executedFunctions[0]?.functionName === 'open_settings') {
+        router.push('/settings/profile' as any);
+        setIsProcessing(false);
+        return;
+      }
 
-      // Handle transaction — wire pet reactions
-      const hasTransaction = result.executedFunctions.some(f => f.functionName === 'log_transaction');
-      if (hasTransaction) {
-        // Record engagement
-        await recordEngagement('transaction_log');
+      // If conversation context intercepted and wants to execute a transaction
+      if (result.pendingTransaction && result.contentType !== 'confirmation') {
+        // This means the context said "execute" — run confirmed transaction
+        await executeTransaction(result.pendingTransaction);
+        return;
+      }
 
-        // Recalculate pet state
-        const stateResult = await recalculatePetState('transaction');
-        setPetState(stateResult.newState);
-
-        // Fire multi-sensory feedback on state change
-        if (stateResult.stateChanged && petProfile) {
-          playFullPetFeedback(stateResult.newState, petProfile.name);
+      // Show content card if applicable
+      if (result.contentType && result.contentType !== 'idle') {
+        dispatchContent({
+          type: 'SET_CONTENT',
+          payload: {
+            type: result.contentType,
+            data: result.executedFunctions[0]?.data ?? result.pendingTransaction ?? {},
+            responseText: result.responseText,
+          },
+        });
+      } else if (result.contentType === 'idle' || (!result.contentType && !result.pendingTransaction)) {
+        // Clear content on idle or generic response
+        if (!result.pendingTransaction) {
+          dispatchContent({ type: 'CLEAR' });
         }
+      }
 
-        // Generate pet reaction dialogue
-        const logFn = result.executedFunctions.find(f => f.functionName === 'log_transaction');
-        if (logFn?.success) {
-          const data = logFn.data as { percentage?: number; budgetStatus?: { spent: number; weekly_limit: number } } | undefined;
-          const percentage = data?.percentage ?? 0;
-          const budgetStatus = data?.budgetStatus;
-          const remaining = budgetStatus ? budgetStatus.weekly_limit - budgetStatus.spent : 0;
-          const category = (logFn.params as Record<string, unknown>).category as string;
-          const amount = (logFn.params as Record<string, unknown>).amount as number;
+      // If pending transaction (confirmation flow), show the confirmation card
+      if (result.pendingTransaction && result.contentType === 'confirmation') {
+        const p = result.pendingTransaction;
+        const projected = p.budgetLimit > 0
+          ? Math.round(((p.budgetSpent + p.amount) / p.budgetLimit) * 100)
+          : 0;
+        dispatchContent({
+          type: 'SET_CONTENT',
+          payload: {
+            type: 'confirmation',
+            data: result.pendingTransaction,
+            responseText: `\u00A3${p.amount.toFixed(2)} on ${p.categoryName}. That'll put you at ${projected}% for the week. Say yes to confirm or no to cancel.`,
+          },
+        });
+        setDialogue(`\u00A3${p.amount.toFixed(2)} on ${p.categoryName}. Confirm?`);
+      }
 
-          const reaction = getTransactionReaction(category, amount, remaining, percentage);
-          const dialogueText = await resolveDialogue(reaction.templateKey, reaction.slotValues);
-          setDialogue(dialogueText);
-        }
-      } else if (result.responseText) {
+      // Show pet dialogue
+      if (result.responseText && !result.pendingTransaction) {
         setDialogue(result.responseText);
       }
 
@@ -186,10 +273,74 @@ export default function HomeScreen() {
 
       if (result.lesson) {
         setCurrentLesson(result.lesson);
-        setTimeout(() => setShowLesson(true), 800);
+        setTimeout(() => { setShowLesson(true); conversationContext.startLessonOffer(); }, 800);
       }
     } catch {
       setDialogue("Hmm, something went wrong. Try again!");
+    } finally {
+      setIsProcessing(false);
+      loadData(); // Refresh chips + state
+    }
+  };
+
+  const executeTransaction = async (pending: PendingTransaction) => {
+    try {
+      const result = await aiService.executeConfirmedTransaction(pending);
+
+      await recordEngagement('transaction_log');
+      await loadData();
+
+      // Recalculate pet state
+      const stateResult = await recalculatePetState('transaction');
+      setPetState(stateResult.newState);
+      setHealthPoints(stateResult.newHealth);
+
+      if (stateResult.stateChanged && petProfile) {
+        playFullPetFeedback(stateResult.newState, petProfile.name);
+      }
+
+      // Pet reaction dialogue
+      const logFn = result.executedFunctions.find(f => f.functionName === 'log_transaction');
+      if (logFn?.success) {
+        const data = logFn.data as { percentage?: number; budgetStatus?: { spent: number; weekly_limit: number } } | undefined;
+        const percentage = data?.percentage ?? 0;
+        const budgetStatus = data?.budgetStatus;
+        const remaining = budgetStatus ? budgetStatus.weekly_limit - budgetStatus.spent : 0;
+        const category = (logFn.params as Record<string, unknown>).category as string;
+        const amount = (logFn.params as Record<string, unknown>).amount as number;
+
+        const reaction = getTransactionReaction(category, amount, remaining, percentage);
+        const dialogueText = await resolveDialogue(reaction.templateKey, reaction.slotValues);
+        setDialogue(dialogueText);
+      }
+
+      if (result.xpEarned > 0) {
+        showXPPopup(result.xpEarned);
+      }
+
+      if (result.lesson) {
+        setCurrentLesson(result.lesson);
+        setTimeout(() => { setShowLesson(true); conversationContext.startLessonOffer(); }, 800);
+      }
+
+      // Show game card if triggered
+      if (result.game) {
+        dispatchContent({
+          type: 'SET_CONTENT',
+          payload: {
+            type: result.game === 'needs_vs_wants' ? 'game_needs_vs_wants' : 'game_bnpl',
+            data: {},
+            responseText: result.game === 'needs_vs_wants'
+              ? "I've noticed a few fun purchases lately. Let's play a quick game! Say 'start' when ready."
+              : "I've spotted some BNPL purchases. Let me show you something interesting. Say 'start' when ready.",
+          },
+        });
+      } else {
+        // Clear confirmation card after successful transaction
+        dispatchContent({ type: 'CLEAR' });
+      }
+    } catch {
+      setDialogue("Something went wrong logging that. Try again!");
     } finally {
       setIsProcessing(false);
     }
@@ -213,13 +364,14 @@ export default function HomeScreen() {
   };
 
   const petName = petProfile?.name ?? 'Buddy';
-  const stateColor = theme.colors.petStates[petState];
+  const showChips = !contentState; // Hide chips when content card is showing
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.colors.base.background }]} edges={['top', 'bottom']}>
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        {/* Scrollable content area */}
         <ScrollView
-          contentContainerStyle={[styles.container, { padding: theme.spacing.lg }]}
+          contentContainerStyle={[styles.scrollContent, { padding: theme.spacing.lg }]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
@@ -244,7 +396,7 @@ export default function HomeScreen() {
 
           {/* Pet Terminal */}
           <Animated.View entering={FadeIn.duration(600)}>
-            <PetTerminal petState={petState} petName={petName} />
+            <PetTerminal petState={petState} petName={petName} healthPoints={healthPoints} />
           </Animated.View>
 
           {/* Speech Bubble */}
@@ -254,183 +406,33 @@ export default function HomeScreen() {
             </Animated.View>
           ) : null}
 
-          {/* Primary CTA: Log Spending */}
-          <Animated.View entering={FadeInDown.delay(300).duration(400)}>
-            <Pressable
-              onPress={() => setShowTransactionSheet(true)}
-              disabled={isProcessing}
-              accessibilityLabel="Log spending"
-              accessibilityRole="button"
-              accessibilityHint="Open the transaction input"
-              style={({ pressed }) => [
-                styles.primaryButton,
-                {
-                  backgroundColor: pressed ? theme.colors.interactive.primaryPressed : theme.colors.interactive.primary,
-                  borderRadius: theme.radius.xl,
-                  borderBottomWidth: pressed ? 0 : 3,
-                  borderBottomColor: theme.colors.interactive.primaryPressed,
-                  opacity: isProcessing ? 0.6 : 1,
-                },
-                pressed ? theme.shadows.pressed : theme.shadows.md,
-              ]}
-            >
-              <Text style={[styles.primaryButtonText, { color: theme.colors.interactive.primaryText }]}>
-                Log Spending
-              </Text>
-            </Pressable>
-          </Animated.View>
+          {/* Suggestion Chips — only when no content card */}
+          {showChips && (
+            <Animated.View entering={FadeInDown.delay(300).duration(400)}>
+              <SuggestionChips
+                chips={chips}
+                onChipPress={handleSend}
+                disabled={isProcessing}
+              />
+            </Animated.View>
+          )}
 
-          {/* Secondary Buttons */}
-          <View style={styles.secondaryRow}>
-            <Pressable
-              onPress={() => router.navigate('/budget')}
-              accessibilityLabel="View budget"
-              accessibilityRole="button"
-              style={({ pressed }) => [
-                styles.secondaryButton,
-                {
-                  backgroundColor: pressed ? theme.colors.interactive.secondaryPressed : theme.colors.interactive.secondary,
-                  borderRadius: theme.radius.xl,
-                  borderBottomWidth: pressed ? 0 : 2,
-                  borderBottomColor: theme.colors.interactive.secondaryPressed,
-                },
-                pressed ? theme.shadows.pressed : theme.shadows.sm,
-              ]}
-            >
-              <Text style={[styles.secondaryButtonText, { color: theme.colors.interactive.secondaryText }]}>
-                Budget
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={() => router.navigate('/challenges')}
-              accessibilityLabel="View challenges"
-              accessibilityRole="button"
-              style={({ pressed }) => [
-                styles.secondaryButton,
-                {
-                  backgroundColor: pressed ? theme.colors.interactive.secondaryPressed : theme.colors.interactive.secondary,
-                  borderRadius: theme.radius.xl,
-                  borderBottomWidth: pressed ? 0 : 2,
-                  borderBottomColor: theme.colors.interactive.secondaryPressed,
-                },
-                pressed ? theme.shadows.pressed : theme.shadows.sm,
-              ]}
-            >
-              <Text style={[styles.secondaryButtonText, { color: theme.colors.interactive.secondaryText }]}>
-                Challenges
-              </Text>
-            </Pressable>
-          </View>
-
-          {/* Status Bar */}
-          <Pressable
-            onPress={() => router.navigate('/history')}
-            accessibilityLabel={`Status: ${stateColor.label}. ${profile?.streak_days ?? 0} day streak. Tap for history.`}
-            style={[styles.statusBar, { borderColor: theme.colors.base.border }]}
-          >
-            <View style={[styles.statusDot, { backgroundColor: stateColor.medium }]} />
-            <Text style={[styles.statusText, { color: theme.colors.base.textSecondary }]}>
-              {stateColor.label}
-            </Text>
-            <Text style={[styles.statusSeparator, { color: theme.colors.base.border }]}>
-              {' · '}
-            </Text>
-            <Text style={[styles.statusText, { color: theme.colors.base.textSecondary }]}>
-              Streak: {profile?.streak_days ?? 0}d
-            </Text>
-          </Pressable>
+          {/* Dynamic Content Area */}
+          <DynamicContentArea contentState={contentState} />
         </ScrollView>
 
-        {/* Transaction Input Bottom Sheet */}
-        <Modal
-          visible={showTransactionSheet}
-          animationType="slide"
-          transparent
-          onRequestClose={() => setShowTransactionSheet(false)}
-        >
-          <Pressable style={styles.sheetOverlay} onPress={() => setShowTransactionSheet(false)}>
-            <Pressable style={styles.sheetBlockTap} onPress={() => {}}>
-              <Animated.View
-                entering={SlideInDown.duration(300)}
-                exiting={SlideOutDown.duration(200)}
-                style={[
-                  styles.sheet,
-                  {
-                    backgroundColor: theme.colors.base.background,
-                    borderTopLeftRadius: theme.radius.lg,
-                    borderTopRightRadius: theme.radius.lg,
-                  },
-                  theme.shadows.lg,
-                ]}
-              >
-                <View style={[styles.sheetHandle, { backgroundColor: theme.colors.base.border }]} />
-                <Text
-                  style={[styles.sheetTitle, {
-                    color: theme.colors.base.textPrimary,
-                    fontFamily: theme.fontsLoaded ? theme.fonts.heading : undefined,
-                  }]}
-                >
-                  Log a transaction
-                </Text>
-                <Text style={[styles.sheetHint, { color: theme.colors.base.textSecondary }]}>
-                  Say or type what you spent:
-                </Text>
-
-                {/* Input mode toggle */}
-                <View style={styles.modeRow}>
-                  <Pressable
-                    onPress={() => setInputMode('text')}
-                    accessibilityRole="button"
-                    accessibilityLabel="Text input mode"
-                    style={[
-                      styles.modeTab,
-                      {
-                        backgroundColor: inputMode === 'text' ? theme.colors.interactive.primary : 'transparent',
-                        borderRadius: theme.radius.sm,
-                      },
-                    ]}
-                  >
-                    <Text style={{ color: inputMode === 'text' ? theme.colors.interactive.primaryText : theme.colors.base.textSecondary, fontSize: theme.typeScale.bodyLarge }}>
-                      Text
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => setInputMode('voice')}
-                    accessibilityRole="button"
-                    accessibilityLabel="Voice input mode"
-                    style={[
-                      styles.modeTab,
-                      {
-                        backgroundColor: inputMode === 'voice' ? theme.colors.interactive.primary : 'transparent',
-                        borderRadius: theme.radius.sm,
-                      },
-                    ]}
-                  >
-                    <Text style={{ color: inputMode === 'voice' ? theme.colors.interactive.primaryText : theme.colors.base.textSecondary, fontSize: theme.typeScale.bodyLarge }}>
-                      Voice
-                    </Text>
-                  </Pressable>
-                </View>
-
-                {inputMode === 'voice' ? (
-                  <VoiceInput onTranscript={handleSend} isProcessing={isProcessing} />
-                ) : (
-                  <ChatInput onSend={handleSend} isProcessing={isProcessing} embedded prominent />
-                )}
-              </Animated.View>
-            </Pressable>
-          </Pressable>
-        </Modal>
+        {/* Fixed Footer — Voice/Text Control */}
+        <VoiceControl onSend={handleSend} isProcessing={isProcessing} shakeTrigger={shakeTrigger} />
 
         {/* XP Popup */}
         <XPPopup amount={xpPopup.amount} visible={xpPopup.visible} />
 
-        {/* Lesson Modal */}
+        {/* Lesson Modal (kept as modal for now) */}
         <MicroLessonModal
           visible={showLesson}
           lesson={currentLesson}
           onAcceptChallenge={handleAcceptChallenge}
-          onDismiss={() => setShowLesson(false)}
+          onDismiss={() => { setShowLesson(false); conversationContext.reset(); }}
         />
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -440,7 +442,7 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
   flex: { flex: 1 },
-  container: {
+  scrollContent: {
     flexGrow: 1,
     gap: 16,
   },
@@ -454,81 +456,4 @@ const styles = StyleSheet.create({
   },
   settingsIcon: { fontSize: 18, fontWeight: '600' },
   loadingText: { textAlign: 'center', fontSize: 14 },
-  primaryButton: {
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-    alignItems: 'center',
-    minHeight: 48,
-  },
-  primaryButtonText: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  secondaryRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  secondaryButton: {
-    flex: 1,
-    paddingVertical: 12,
-    alignItems: 'center',
-    minHeight: 48,
-  },
-  secondaryButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  statusBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    borderTopWidth: 1,
-    gap: 6,
-  },
-  statusDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
-  statusText: { fontSize: 14 },
-  statusSeparator: { fontSize: 14 },
-  // Bottom sheet
-  sheetOverlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.3)',
-  },
-  sheetBlockTap: {},
-  sheet: {
-    padding: 24,
-    paddingBottom: 40,
-    gap: 16,
-  },
-  sheetHandle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    alignSelf: 'center',
-    marginBottom: 8,
-  },
-  sheetTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  sheetHint: {
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  modeRow: {
-    flexDirection: 'row',
-    gap: 8,
-    justifyContent: 'center',
-  },
-  modeTab: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    minHeight: 36,
-  },
 });
