@@ -1,6 +1,6 @@
 // Onboarding step 1: Shake-to-talk intro — user must shake to continue
 import { useState, useEffect } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -37,6 +37,8 @@ export default function ShakePracticeScreen() {
   useShakeDetector({
     onShake: () => {
       if (shaken) return;
+      // Immediate haptic so user knows the shake registered
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
       setShakeCount((n) => n + 1);
     },
     enabled: !shaken,
@@ -44,7 +46,13 @@ export default function ShakePracticeScreen() {
     debounceMs: 800,
   });
 
-  // After first shake — confirm and proceed to welcome
+  const handleActivate = () => {
+    if (shaken) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    setShakeCount((n) => n + 1);
+  };
+
+  // After shake or tap — confirm and proceed to welcome
   useEffect(() => {
     if (shakeCount >= 1 && !shaken) {
       setShaken(true);
@@ -88,22 +96,45 @@ export default function ShakePracticeScreen() {
 
           {/* Shake hint */}
           {!shaken ? (
-            <Animated.View
-              entering={FadeInDown.delay(600).duration(600)}
-              style={[styles.hintCard, { backgroundColor: theme.colors.base.terminal, borderRadius: theme.radius.terminal }]}
-            >
-              <Animated.View style={bobStyle}>
-                <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 32, textAlign: 'center' }}>
-                  {'((( )))'}
+            <>
+              <Animated.View
+                entering={FadeInDown.delay(600).duration(600)}
+                style={[styles.hintCard, { backgroundColor: theme.colors.base.terminal, borderRadius: theme.radius.terminal }]}
+              >
+                <Animated.View style={bobStyle}>
+                  <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 32, textAlign: 'center' }}>
+                    {'((( )))'}
+                  </Text>
+                </Animated.View>
+                <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14, textAlign: 'center', marginTop: 12, opacity: 0.8 }}>
+                  {'> shake your phone to begin'}
+                </Text>
+                <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 12, textAlign: 'center', marginTop: 4, opacity: 0.5 }}>
+                  {'shake activates voice input\nuse it to answer all questions'}
                 </Text>
               </Animated.View>
-              <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14, textAlign: 'center', marginTop: 12, opacity: 0.8 }}>
-                {'> shake your phone to begin'}
-              </Text>
-              <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 12, textAlign: 'center', marginTop: 4, opacity: 0.5 }}>
-                {'shake activates voice input\nuse it to answer all questions'}
-              </Text>
-            </Animated.View>
+
+              <Animated.View entering={FadeInDown.delay(1000).duration(600)}>
+                <Pressable
+                  onPress={handleActivate}
+                  accessibilityRole="button"
+                  accessibilityLabel="Tap to continue instead of shaking"
+                  style={({ pressed }) => [
+                    styles.tapBtn,
+                    {
+                      backgroundColor: pressed
+                        ? theme.colors.interactive.primaryPressed
+                        : theme.colors.interactive.primary,
+                      borderRadius: theme.radius.xl,
+                    },
+                  ]}
+                >
+                  <Text style={{ color: theme.colors.interactive.primaryText, fontFamily: mono, fontSize: 14, fontWeight: '700' }}>
+                    or tap here
+                  </Text>
+                </Pressable>
+              </Animated.View>
+            </>
           ) : (
             <Animated.View
               entering={FadeInDown.duration(400)}
@@ -145,5 +176,10 @@ const styles = StyleSheet.create({
   hintCard: {
     padding: 24,
     alignItems: 'center',
+  },
+  tapBtn: {
+    paddingVertical: 14,
+    alignItems: 'center',
+    minHeight: 48,
   },
 });
