@@ -1,28 +1,9 @@
-// import {
-//   CactusLM,
-//   type CactusLMMessage,
-//   type CactusLMTool,
-// } from 'cactus-react-native';
-
-// --- HuggingFace Inference API (dev mode replacement for Cactus on-device) ---
-import { Platform } from 'react-native';
-
-const HF_API_URL = Platform.OS === 'web'
-  ? 'http://localhost:3001/nscale/v1/chat/completions'
-  : 'https://router.huggingface.co/nscale/v1/chat/completions';
-const HF_MODEL = 'Qwen/Qwen3-4B-Instruct-2507';
-const HF_API_KEY = process.env.EXPO_PUBLIC_HF_API_KEY ?? '';
-
-type CactusLMMessage = { role: 'system' | 'user' | 'assistant'; content: string };
-type CactusLMTool = {
-  name: string;
-  description: string;
-  parameters: {
-    type: 'object';
-    properties: Record<string, { type: string; description: string }>;
-    required: string[];
-  };
-};
+// On-device AI via Cactus (FunctionGemma) — no cloud dependency
+import {
+  CactusLM,
+  type CactusLMMessage,
+  type CactusLMTool,
+} from 'cactus-react-native';
 
 import { getUserFacingFunctions } from '../data/functionDefs';
 import { executeFunctionCall, type FunctionCallResult } from './functionExecutor';
@@ -58,7 +39,7 @@ const PERSONA_PROMPTS: Record<string, string> = {
 };
 
 class GemmaAIService {
-  // private model: CactusLM | null = null;  // cactus on-device model
+  private model: CactusLM | null = null;
   private isInitialized = false;
   private isInitializing = false;
 
@@ -66,29 +47,23 @@ class GemmaAIService {
     if (this.isInitialized || this.isInitializing) return;
     this.isInitializing = true;
 
-    // --- HuggingFace API: no download/init needed ---
-    onProgress?.(1);
-    this.isInitialized = true;
-    this.isInitializing = false;
-
-    // --- Cactus on-device init (commented out) ---
-    // try {
-    //   this.model = new CactusLM({
-    //     model: 'functiongemma-270m-it',
-    //   });
-    //   await this.model.download({
-    //     onProgress: (progress) => {
-    //       onProgress?.(progress);
-    //     },
-    //   });
-    //   await this.model.init();
-    //   this.isInitialized = true;
-    // } catch (error) {
-    //   console.error('Failed to initialize AI model:', error);
-    //   throw error;
-    // } finally {
-    //   this.isInitializing = false;
-    // }
+    try {
+      this.model = new CactusLM({
+        model: 'functiongemma-270m-it',
+      });
+      await this.model.download({
+        onProgress: (progress) => {
+          onProgress?.(progress);
+        },
+      });
+      await this.model.init();
+      this.isInitialized = true;
+    } catch (error) {
+      console.error('Failed to initialize AI model:', error);
+      throw error;
+    } finally {
+      this.isInitializing = false;
+    }
   }
 
   getInitStatus(): boolean {
@@ -144,54 +119,17 @@ ${budgetContext}`,
     ];
 
     try {
-      if (!this.isInitialized) throw new Error('Model not initialized');
+      if (!this.isInitialized || !this.model) throw new Error('Model not initialized');
 
-      // --- HuggingFace Inference API call ---
-      if (!HF_API_KEY) console.warn('[AI] HF_API_KEY is empty — check .env.local has EXPO_PUBLIC_HF_API_KEY set');
-
-      const hfRes = await fetch(HF_API_URL, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${HF_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: HF_MODEL,
-          messages,
-          tools: tools.map((t) => ({ type: 'function', function: t })),
-          tool_choice: 'auto',
+      const result = await this.model.complete({
+        messages,
+        tools,
+        options: {
           temperature: 0.3,
-          max_tokens: 256,
-        }),
+          maxTokens: 256,
+          forceTools: true,
+        },
       });
-
-      if (!hfRes.ok) {
-        const errText = await hfRes.text();
-        console.error(`[AI] HF API error ${hfRes.status}:`, errText);
-        throw new Error(`HF API ${hfRes.status}: ${errText}`);
-      }
-
-      const hfData = await hfRes.json();
-      console.log('[AI] HF response:', JSON.stringify(hfData).slice(0, 300));
-      const hfMessage = hfData.choices?.[0]?.message;
-      const result = {
-        response: hfMessage?.content ?? '',
-        functionCalls: hfMessage?.tool_calls?.map((tc: { function: { name: string; arguments: string } }) => ({
-          name: tc.function.name,
-          arguments: JSON.parse(tc.function.arguments),
-        })) ?? [],
-      };
-
-      // --- Cactus on-device completion (commented out) ---
-      // const result = await this.model.complete({
-      //   messages,
-      //   tools,
-      //   options: {
-      //     temperature: 0.3,
-      //     maxTokens: 256,
-      //     forceTools: true,
-      //   },
-      // });
 
       const executedFunctions: FunctionCallResult[] = [];
       let responseText = result.response || '';
@@ -329,10 +267,8 @@ ${budgetContext}`,
 
     const categoryKeywords: Record<string, string[]> = {};
     for (const cat of categories) {
-      // Start with category name as keyword
       categoryKeywords[cat.id] = [cat.name.toLowerCase()];
     }
-    // Add plan keywords if available
     if (plan) {
       for (const planCat of plan.categories) {
         if (categoryKeywords[planCat.id]) {
@@ -341,7 +277,6 @@ ${budgetContext}`,
       }
     }
 
-    // Fallback hardcoded keywords for common categories
     const fallbackKeywords: Record<string, string[]> = {
       coffee: ['coffee', 'latte', 'cappuccino', 'espresso', 'flat white', 'mocha', 'cafe', 'starbucks', 'costa'],
       food: ['food', 'lunch', 'dinner', 'breakfast', 'meal', 'pizza', 'burger', 'sushi', 'groceries', 'pret', 'eat', 'ate'],
@@ -424,15 +359,11 @@ ${budgetContext}`,
   }
 
   async destroy(): Promise<void> {
-    // --- HuggingFace API: nothing to tear down ---
-    this.isInitialized = false;
-
-    // --- Cactus on-device teardown (commented out) ---
-    // if (this.model) {
-    //   await this.model.destroy();
-    //   this.model = null;
-    //   this.isInitialized = false;
-    // }
+    if (this.model) {
+      await this.model.destroy();
+      this.model = null;
+      this.isInitialized = false;
+    }
   }
 }
 
