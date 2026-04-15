@@ -1,93 +1,175 @@
-import { useState, useEffect } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import { useState } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  Pressable,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as Speech from 'expo-speech';
-import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import OnboardingProgress from '../../components/OnboardingProgress';
+import { useTheme } from '../../theme';
 import { useOnboarding } from '../../services/onboardingContext';
-import { Colors, Spacing, FontSize, BorderRadius } from '../../constants/theme';
+import { getPetArt } from '../../assets/pet';
+import SpeechBubble from '../../components/pet/SpeechBubble';
 
 export default function WelcomeScreen() {
+  const theme = useTheme();
   const { data, updateData } = useOnboarding();
-  const [name, setName] = useState(data.userName);
-  const [inputMethod, setInputMethod] = useState<'voice' | 'text'>(data.inputPreference);
+  const [petName, setPetName] = useState(data.petName === 'Buddy' ? '' : data.petName);
 
-  useEffect(() => {
-    Speech.speak("Welcome to Micro Lessons. What's your name?", { rate: 0.9 });
-  }, []);
+  const eggLines = getPetArt('egg');
+  const monoFont = theme.fontsLoaded ? theme.fonts.monospace : theme.fonts.monospaceFallback;
+  const headingFont = theme.fontsLoaded ? theme.fonts.heading : theme.fonts.headingFallback;
+  const canContinue = petName.trim().length > 0;
 
   const handleContinue = () => {
-    if (!name.trim()) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    updateData({ userName: name.trim(), inputPreference: inputMethod });
-    router.push('/onboarding/motivation');
+    if (!canContinue) return;
+    updateData({ petName: petName.trim() });
+    router.push('/onboarding/questions');
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.base.background }]}>
       <KeyboardAvoidingView
-        style={styles.inner}
+        style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <OnboardingProgress currentStep={1} totalSteps={7} />
-
-        <View style={styles.content}>
-          <Text style={styles.title} accessibilityRole="header">Welcome to Micro Lessons</Text>
-          <Text style={styles.subtitle}>Let's personalise your experience</Text>
-
-          <View style={styles.field}>
-            <Text style={styles.label}>What's your name?</Text>
-            <TextInput
-              style={styles.input}
-              value={name}
-              onChangeText={setName}
-              placeholder="Enter your name"
-              placeholderTextColor={Colors.textMuted}
-              autoFocus
-              accessibilityLabel="Your name"
-              returnKeyType="next"
-            />
-          </View>
-
-          <View style={styles.field}>
-            <Text style={styles.label}>How would you like to input expenses?</Text>
-            <View style={styles.methodRow}>
-              <Pressable
-                style={[styles.methodCard, inputMethod === 'voice' && styles.methodCardSelected]}
-                onPress={() => { setInputMethod('voice'); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
-                accessibilityRole="button"
-                accessibilityState={{ selected: inputMethod === 'voice' }}
-                accessibilityLabel="Talk it through, voice input"
-              >
-                <Text style={styles.methodIcon}>🎙️</Text>
-                <Text style={[styles.methodTitle, inputMethod === 'voice' && styles.methodTitleSelected]}>Talk it through</Text>
-                <Text style={styles.methodDesc}>Voice</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.methodCard, inputMethod === 'text' && styles.methodCardSelected]}
-                onPress={() => { setInputMethod('text'); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
-                accessibilityRole="button"
-                accessibilityState={{ selected: inputMethod === 'text' }}
-                accessibilityLabel="Tap it out, text input"
-              >
-                <Text style={styles.methodIcon}>⌨️</Text>
-                <Text style={[styles.methodTitle, inputMethod === 'text' && styles.methodTitleSelected]}>Tap it out</Text>
-                <Text style={styles.methodDesc}>Text</Text>
-              </Pressable>
+        <ScrollView
+          contentContainerStyle={[styles.scrollContent, { padding: theme.spacing.xl }]}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Egg terminal panel */}
+          <View
+            style={[
+              styles.outerCard,
+              {
+                backgroundColor: theme.colors.base.surface,
+                borderRadius: theme.radius.terminal,
+                borderColor: theme.colors.petStates.neutral.light,
+              },
+              theme.shadows.md,
+            ]}
+          >
+            <View
+              accessible
+              accessibilityRole="image"
+              accessibilityLabel="A mysterious egg sits in a terminal panel, waiting to be named"
+              style={[
+                styles.terminal,
+                {
+                  backgroundColor: theme.colors.base.terminal,
+                  borderRadius: theme.radius.terminal - 2,
+                  padding: theme.spacing.lg,
+                },
+              ]}
+            >
+              {eggLines.map((line, i) => (
+                <Text
+                  key={i}
+                  style={{
+                    color: theme.colors.base.terminalText,
+                    fontFamily: monoFont,
+                    fontSize: theme.typeScale.terminal,
+                    lineHeight: theme.typeScale.terminal * theme.lineHeight.relaxed,
+                    textAlign: 'center',
+                  }}
+                >
+                  {line}
+                </Text>
+              ))}
             </View>
           </View>
-        </View>
 
-        <Pressable
-          style={[styles.cta, !name.trim() && styles.ctaDisabled]}
-          onPress={handleContinue}
-          disabled={!name.trim()}
-          accessibilityRole="button"
-          accessibilityLabel="Let's begin"
-        >
-          <Text style={styles.ctaText}>Let's begin</Text>
-        </Pressable>
+          {/* Speech bubble */}
+          <View style={{ marginTop: theme.spacing.md }}>
+            <SpeechBubble message="Something's hatching! Give it a name to begin." />
+          </View>
+
+          {/* Terminal-style name input */}
+          <View
+            style={[
+              styles.inputCard,
+              {
+                backgroundColor: theme.colors.base.terminal,
+                borderRadius: theme.radius.terminal,
+                padding: theme.spacing.lg,
+                marginTop: theme.spacing.xl,
+              },
+            ]}
+          >
+            <View style={styles.promptRow}>
+              <Text
+                style={{
+                  color: theme.colors.petStates.thriving.light,
+                  fontFamily: monoFont,
+                  fontSize: theme.typeScale.terminal,
+                }}
+              >
+                {'> Name: '}
+              </Text>
+              <TextInput
+                style={[
+                  styles.terminalInput,
+                  {
+                    color: theme.colors.base.terminalText,
+                    fontFamily: monoFont,
+                    fontSize: theme.typeScale.terminal,
+                  },
+                ]}
+                value={petName}
+                onChangeText={setPetName}
+                placeholder="_"
+                placeholderTextColor={theme.colors.base.terminalText + '66'}
+                autoFocus
+                maxLength={16}
+                returnKeyType="done"
+                onSubmitEditing={handleContinue}
+                accessibilityLabel="Pet name input"
+                accessibilityRole="text"
+                accessibilityHint="Type a name for your pet egg"
+              />
+            </View>
+          </View>
+
+          {/* Continue button */}
+          <Pressable
+            style={[
+              styles.button,
+              {
+                backgroundColor: theme.colors.interactive.primary,
+                borderRadius: theme.radius.xl,
+                marginTop: theme.spacing.xl,
+              },
+              !canContinue && { backgroundColor: theme.colors.interactive.disabled },
+              theme.shadows.md,
+            ]}
+            onPress={handleContinue}
+            disabled={!canContinue}
+            accessibilityRole="button"
+            accessibilityLabel="Continue to next step"
+            accessibilityState={{ disabled: !canContinue }}
+          >
+            <Text
+              style={[
+                styles.buttonText,
+                {
+                  color: canContinue
+                    ? theme.colors.interactive.primaryText
+                    : theme.colors.interactive.disabledText,
+                  fontFamily: headingFont,
+                  fontSize: theme.typeScale.bodyLarge,
+                },
+              ]}
+            >
+              Continue
+            </Text>
+          </Pressable>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -96,92 +178,39 @@ export default function WelcomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
   },
-  inner: {
+  flex: {
     flex: 1,
-    paddingHorizontal: Spacing.xxl,
-    paddingBottom: Spacing.xxxl,
   },
-  content: {
-    flex: 1,
+  scrollContent: {
+    flexGrow: 1,
     justifyContent: 'center',
-    gap: Spacing.xxl,
   },
-  title: {
-    fontSize: FontSize.title,
-    fontWeight: '700',
-    color: Colors.text,
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: FontSize.body,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-  },
-  field: {
-    gap: Spacing.sm,
-  },
-  label: {
-    fontSize: FontSize.body,
-    fontWeight: '600',
-    color: Colors.text,
-  },
-  input: {
-    height: 52,
+  outerCard: {
     borderWidth: 2,
-    borderColor: Colors.border,
-    borderRadius: BorderRadius.md,
-    paddingHorizontal: Spacing.lg,
-    fontSize: FontSize.lg,
-    color: Colors.text,
-    backgroundColor: Colors.surfaceSolid,
+    overflow: 'hidden',
   },
-  methodRow: {
+  terminal: {
+    alignItems: 'center',
+  },
+  inputCard: {
+    overflow: 'hidden',
+  },
+  promptRow: {
     flexDirection: 'row',
-    gap: Spacing.md,
+    alignItems: 'center',
   },
-  methodCard: {
+  terminalInput: {
     flex: 1,
+    padding: 0,
+  },
+  button: {
+    minHeight: 48,
     alignItems: 'center',
-    padding: Spacing.xl,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 2,
-    borderColor: Colors.border,
-    backgroundColor: Colors.surfaceSolid,
-    gap: Spacing.xs,
+    justifyContent: 'center',
+    paddingVertical: 14,
   },
-  methodCardSelected: {
-    borderColor: Colors.primary,
-    backgroundColor: '#E6F7F5',
-  },
-  methodIcon: {
-    fontSize: 32,
-  },
-  methodTitle: {
-    fontSize: FontSize.body,
-    fontWeight: '600',
-    color: Colors.text,
-  },
-  methodTitleSelected: {
-    color: Colors.primary,
-  },
-  methodDesc: {
-    fontSize: FontSize.xs,
-    color: Colors.textMuted,
-  },
-  cta: {
-    backgroundColor: Colors.primary,
-    borderRadius: BorderRadius.md,
-    paddingVertical: Spacing.lg,
-    alignItems: 'center',
-  },
-  ctaDisabled: {
-    opacity: 0.4,
-  },
-  ctaText: {
-    fontSize: FontSize.lg,
+  buttonText: {
     fontWeight: '700',
-    color: '#FFFFFF',
   },
 });

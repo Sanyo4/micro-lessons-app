@@ -14,6 +14,8 @@ import {
 } from './database';
 import { getLessonByTrigger, getLessonById, getPersonalityResponse, type MicroLesson } from '../data/lessons';
 import { XP_AWARDS } from '../utils/gamification';
+import { getCoachingReaction } from './petReactions';
+import { resolveDialogue } from './petDialogue';
 
 export interface ParsedFunctionCall {
   name: string;
@@ -28,6 +30,7 @@ export interface FunctionCallResult {
   responseText?: string;
   xpEarned: number;
   lesson?: MicroLesson | null;
+  petCoachingDialogue?: string;
 }
 
 export async function executeFunctionCall(
@@ -135,6 +138,15 @@ async function handleLogTransaction(
       totalXP += XP_AWARDS.VIEW_LESSON;
     }
 
+    // Step 3b: Generate pet coaching dialogue when a lesson is triggered
+    let petCoachingDialogue: string | undefined;
+    if (lesson) {
+      try {
+        const coaching = getCoachingReaction(lesson.triggerType, category);
+        petCoachingDialogue = await resolveDialogue(coaching.templateKey, coaching.slotValues);
+      } catch {}
+    }
+
     // Step 4: Update challenge progress
     let challengeCompletionText = '';
     try {
@@ -177,6 +189,7 @@ async function handleLogTransaction(
       responseText,
       xpEarned: totalXP,
       lesson: lesson ?? null,
+      petCoachingDialogue,
     };
   } catch (error) {
     return {

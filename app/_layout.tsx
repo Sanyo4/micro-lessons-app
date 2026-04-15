@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Slot, router, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Platform } from 'react-native';
 import { getDatabase } from '../services/database';
 import { seedDatabase } from '../data/seed';
 import { AuthProvider, useAuth } from '../services/authContext';
+import { ThemeProvider, useTheme } from '../theme';
 import { Colors, FontSize } from '../constants/theme';
 import { initAccessibilityListener } from '../utils/accessibility';
 
@@ -77,14 +78,27 @@ export default function RootLayout() {
   }
 
   return (
-    <AuthProvider>
-      <StatusBar style="dark" />
-      <AuthGate />
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <View style={Platform.OS === 'web' ? styles.webContainer : styles.nativeContainer}>
+          <StatusBar style="dark" />
+          <AuthGate />
+        </View>
+      </AuthProvider>
+    </ThemeProvider>
   );
 }
 
 const styles = StyleSheet.create({
+  webContainer: {
+    maxWidth: 480,
+    marginHorizontal: 'auto',
+    flex: 1,
+    width: '100%',
+  },
+  nativeContainer: {
+    flex: 1,
+  },
   center: {
     flex: 1,
     justifyContent: 'center',

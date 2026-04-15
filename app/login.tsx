@@ -1,4 +1,5 @@
-import { useState, useCallback } from 'react';
+// Brief 04 — Terminal-themed PIN entry with pet art
+import { useState, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, Alert, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { useSharedValue, useAnimatedStyle, withSequence, withTiming } from 'react-native-reanimated';
@@ -6,16 +7,24 @@ import * as Haptics from 'expo-haptics';
 import * as Speech from 'expo-speech';
 import { router } from 'expo-router';
 import NumPad from '../components/NumPad';
+import PetTerminal from '../components/pet/PetTerminal';
 import { useAuth } from '../services/authContext';
-import { Colors, Spacing, FontSize, BorderRadius } from '../constants/theme';
+import { getPetProfile, type PetProfile } from '../services/database';
+import { useTheme, type PetMood } from '../theme';
 
 const PIN_LENGTH = 4;
 
 export default function LoginScreen() {
+  const theme = useTheme();
   const [pin, setPin] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
+  const [pet, setPet] = useState<PetProfile | null>(null);
   const { login, resetApp } = useAuth();
   const shakeX = useSharedValue(0);
+
+  useEffect(() => {
+    getPetProfile().then(setPet).catch(() => {});
+  }, []);
 
   const shakeStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: shakeX.value }],
@@ -71,21 +80,40 @@ export default function LoginScreen() {
     );
   };
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.content}>
-        <Text style={styles.title} accessibilityRole="header">Welcome Back</Text>
-        <Text style={styles.subtitle}>Enter your 4-digit PIN</Text>
+  const petName = pet?.name ?? 'Buddy';
+  const petState = (pet?.current_state as PetMood) ?? 'neutral';
+  const mono = theme.fontsLoaded ? theme.fonts.monospace : theme.fonts.monospaceFallback;
 
-        <Animated.View style={[styles.dotsRow, shakeStyle]}>
-          {Array.from({ length: PIN_LENGTH }, (_, i) => (
-            <View
-              key={i}
-              style={[styles.dot, i < pin.length ? styles.dotFilled : styles.dotEmpty]}
-              accessibilityLabel={i < pin.length ? 'Digit entered' : 'Digit not entered'}
-            />
-          ))}
-        </Animated.View>
+  return (
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.base.background }]}>
+      <View style={styles.content}>
+        {/* Compact pet terminal */}
+        <View style={styles.petSection}>
+          <PetTerminal petState={petState} petName={petName} compact />
+        </View>
+
+        {/* Terminal-style PIN prompt */}
+        <View style={[styles.pinTerminal, { backgroundColor: theme.colors.base.terminal, borderRadius: theme.radius.terminal }]}>
+          <Text style={[styles.pinPrompt, { color: theme.colors.base.terminalText, fontFamily: mono }]}>
+            {`── Enter PIN to check on\n   ${petName} ──`}
+          </Text>
+
+          <Animated.View style={[styles.dotsRow, shakeStyle]}>
+            {Array.from({ length: PIN_LENGTH }, (_, i) => (
+              <View
+                key={i}
+                style={[
+                  styles.dot,
+                  {
+                    borderColor: theme.colors.interactive.primary,
+                    backgroundColor: i < pin.length ? theme.colors.interactive.primary : 'transparent',
+                  },
+                ]}
+                accessibilityLabel={i < pin.length ? 'Digit entered' : 'Digit not entered'}
+              />
+            ))}
+          </Animated.View>
+        </View>
 
         <NumPad
           onDigit={handleDigit}
@@ -101,7 +129,7 @@ export default function LoginScreen() {
           accessibilityRole="button"
           accessibilityLabel="Forgot PIN — reset app"
         >
-          <Text style={styles.forgotText}>Forgot PIN?</Text>
+          <Text style={[styles.forgotText, { color: theme.colors.interactive.danger }]}>Forgot PIN?</Text>
         </Pressable>
       </View>
     </SafeAreaView>
@@ -109,51 +137,45 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
+  container: { flex: 1 },
   content: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: Spacing.xxl,
-    gap: Spacing.xxl,
+    paddingHorizontal: 24,
+    gap: 20,
   },
-  title: {
-    fontSize: FontSize.title,
-    fontWeight: '700',
-    color: Colors.text,
+  petSection: { width: '100%' },
+  pinTerminal: {
+    width: '100%',
+    padding: 16,
+    alignItems: 'center',
   },
-  subtitle: {
-    fontSize: FontSize.body,
-    color: Colors.textSecondary,
+  pinPrompt: {
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 16,
+    lineHeight: 22,
   },
   dotsRow: {
     flexDirection: 'row',
-    gap: Spacing.xl,
-    paddingVertical: Spacing.lg,
+    gap: 20,
+    paddingVertical: 8,
   },
   dot: {
     width: 20,
     height: 20,
     borderRadius: 10,
     borderWidth: 2,
-    borderColor: Colors.primary,
-  },
-  dotFilled: {
-    backgroundColor: Colors.primary,
-  },
-  dotEmpty: {
-    backgroundColor: 'transparent',
   },
   forgotButton: {
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.xl,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    minHeight: 48,
+    justifyContent: 'center',
   },
   forgotText: {
-    fontSize: FontSize.sm,
-    color: Colors.danger,
+    fontSize: 14,
     fontWeight: '600',
   },
 });

@@ -5,7 +5,12 @@
 // } from 'cactus-react-native';
 
 // --- HuggingFace Inference API (dev mode replacement for Cactus on-device) ---
-const HF_API_URL = 'https://api-inference.huggingface.co/models/google/functiongemma-270m-it/v1/chat/completions';
+import { Platform } from 'react-native';
+
+const HF_API_URL = Platform.OS === 'web'
+  ? 'http://localhost:3001/nscale/v1/chat/completions'
+  : 'https://router.huggingface.co/nscale/v1/chat/completions';
+const HF_MODEL = 'Qwen/Qwen3-4B-Instruct-2507';
 const HF_API_KEY = process.env.EXPO_PUBLIC_HF_API_KEY ?? '';
 
 type CactusLMMessage = { role: 'system' | 'user' | 'assistant'; content: string };
@@ -151,9 +156,10 @@ ${budgetContext}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          model: HF_MODEL,
           messages,
           tools: tools.map((t) => ({ type: 'function', function: t })),
-          tool_choice: 'required', // equivalent to cactus forceTools: true
+          tool_choice: 'auto',
           temperature: 0.3,
           max_tokens: 256,
         }),

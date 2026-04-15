@@ -15,11 +15,15 @@ export async function playBudgetTone(state: BudgetState): Promise<void> {
   try {
     await stopTone();
 
-    await Audio.setAudioModeAsync({
-      playsInSilentModeIOS: false,
-      allowsRecordingIOS: false,
-      staysActiveInBackground: false,
-    });
+    try {
+      await Audio.setAudioModeAsync({
+        playsInSilentModeIOS: false,
+        allowsRecordingIOS: false,
+        staysActiveInBackground: false,
+      });
+    } catch {
+      // setAudioModeAsync may fail on web — safe to ignore
+    }
 
     const { sound } = await Audio.Sound.createAsync(SOUND_FILES[state]);
     currentSound = sound;
@@ -49,4 +53,22 @@ export async function stopTone(): Promise<void> {
     }
     currentSound = null;
   }
+}
+
+// === Pet State Tonal Cues (Brief 02) ===
+// Reuse existing budget state tones mapped to pet moods until dedicated pet WAVs are created.
+// Mapping: thriving→excellent, happy→good, neutral→good, worried→warning, critical→critical
+import type { PetMood } from './petState';
+
+const PET_TONE_MAP: Record<PetMood, BudgetState> = {
+  thriving: 'excellent',
+  happy: 'good',
+  neutral: 'good',
+  worried: 'warning',
+  critical: 'critical',
+};
+
+export async function playPetTone(state: PetMood): Promise<void> {
+  const budgetState = PET_TONE_MAP[state];
+  await playBudgetTone(budgetState);
 }

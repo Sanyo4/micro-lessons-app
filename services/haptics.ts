@@ -23,6 +23,7 @@ const IOS_PATTERNS: Record<BudgetState, { count: number; interval: number; style
 };
 
 export async function playBudgetHaptic(state: BudgetState): Promise<void> {
+  if (Platform.OS === 'web') return;
   if (Platform.OS === 'android') {
     Vibration.vibrate(ANDROID_PATTERNS[state]);
     return;
@@ -39,9 +40,46 @@ export async function playBudgetHaptic(state: BudgetState): Promise<void> {
 }
 
 export async function playTransactionHaptic(): Promise<void> {
+  if (Platform.OS === 'web') return;
   await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 }
 
 export async function playSuccessHaptic(): Promise<void> {
+  if (Platform.OS === 'web') return;
   await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+}
+
+// === Pet State Haptic Patterns (Brief 02) ===
+import type { PetMood } from './petState';
+
+export async function playPetHaptic(state: PetMood): Promise<void> {
+  if (Platform.OS === 'web') return;
+
+  switch (state) {
+    case 'thriving':
+      // Quick double-pulse, like an excited heartbeat
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      await delay(100);
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      break;
+    case 'happy':
+      // Single gentle pulse
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      break;
+    case 'neutral':
+      // No haptic — absence IS the signal
+      break;
+    case 'worried':
+      // Slow medium vibration
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      break;
+    case 'critical':
+      // Three sharp pulses in quick succession
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      await delay(150);
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      await delay(150);
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      break;
+  }
 }

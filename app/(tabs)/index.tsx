@@ -1,61 +1,57 @@
+// Brief 04 — Pet-centric home screen
 import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
+  Pressable,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Keyboard,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, router } from 'expo-router';
-import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown, SlideInDown, SlideOutDown } from 'react-native-reanimated';
+import * as Speech from 'expo-speech';
+import PetTerminal from '../../components/pet/PetTerminal';
+import SpeechBubble from '../../components/pet/SpeechBubble';
 import ChatInput from '../../components/ChatInput';
-import ConfirmationBanner from '../../components/ConfirmationBanner';
-import type { BannerType } from '../../components/ConfirmationBanner';
+import VoiceInput from '../../components/VoiceInput';
 import MicroLessonModal from '../../components/MicroLessonModal';
 import XPPopup from '../../components/XPPopup';
-import ModeToggle from '../../components/ModeToggle';
-import VoiceInput from '../../components/VoiceInput';
-import MenuChips from '../../components/MenuChips';
 import {
   getUserProfile,
+  getPetProfile,
   createChallenge,
   updateUserXP,
+  getBudgetCategories,
   type UserProfile,
+  type PetProfile,
 } from '../../services/database';
 import { aiService, type AIResult } from '../../services/ai';
-import { XP_AWARDS, getXPForNextLevel, getLevelTitle } from '../../utils/gamification';
-import { Colors, Spacing, FontSize, BorderRadius } from '../../constants/theme';
-import { getBudgetState } from '../../utils/budgetState';
+import { recalculatePetState, getCurrentPetState, type PetMood } from '../../services/petState';
+import { recordEngagement } from '../../services/engagement';
+import { checkEvolution } from '../../services/petEvolution';
+import { getTransactionReaction, getDailyCheckInReaction } from '../../services/petReactions';
+import { resolveDialogue } from '../../services/petDialogue';
+import { playFullPetFeedback } from '../../services/audioFeedback';
+import { XP_AWARDS } from '../../utils/gamification';
 import { announceForScreenReader } from '../../utils/accessibility';
-import { announceScreen, playFullBudgetFeedback } from '../../services/audioFeedback';
-import { getBudgetCategories } from '../../services/database';
-import * as Speech from 'expo-speech';
-
-type InputMode = 'voice' | 'text';
+import { useTheme } from '../../theme';
 
 export default function HomeScreen() {
+  const theme = useTheme();
+
+  // Core state
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [petProfile, setPetProfile] = useState<PetProfile | null>(null);
+  const [petState, setPetState] = useState<PetMood>('neutral');
+  const [dialogue, setDialogue] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isModelReady, setIsModelReady] = useState(false);
-  const [modelLoadProgress, setModelLoadProgress] = useState(0);
-  const [inputMode, setInputMode] = useState<InputMode>('voice');
-  const inputModeRef = useRef<InputMode>('voice');
-
-  const handleModeChange = useCallback((mode: InputMode) => {
-    Speech.stop();
-    setInputMode(mode);
-    inputModeRef.current = mode;
-  }, []);
-
-  // Banner
-  const [banner, setBanner] = useState<{
-    message: string;
-    type: BannerType;
-    visible: boolean;
-  }>({ message: '', type: 'info', visible: false });
+  const [showTransactionSheet, setShowTransactionSheet] = useState(false);
+  const [inputMode, setInputMode] = useState<'voice' | 'text'>('text');
 
   // Lesson modal
   const [showLesson, setShowLesson] = useState(false);
@@ -67,81 +63,66 @@ export default function HomeScreen() {
     visible: false,
   });
 
-  const scrollRef = useRef<ScrollView>(null);
-
-  useEffect(() => {
-    const keyboardListener = Keyboard.addListener('keyboardDidShow', () => {
-      scrollRef.current?.scrollToEnd({ animated: true });
-    });
-    return () => keyboardListener.remove();
-  }, []);
-
-  const loadProfile = useCallback(async () => {
-    const p = await getUserProfile();
+  const loadData = useCallback(async () => {
+    const [p, pet] = await Promise.all([getUserProfile(), getPetProfile()]);
     setProfile(p);
+    setPetProfile(pet);
+    if (pet) {
+      setPetState(pet.current_state as PetMood);
+    }
   }, []);
 
   useFocusEffect(
     useCallback(() => {
-      loadProfile();
-      announceScreen('Home', 'Log expenses by voice or text');
-    }, [loadProfile])
+      loadData();
+    }, [loadData])
   );
 
   // Init AI on first mount
-  useFocusEffect(
-    useCallback(() => {
-      let mounted = true;
-      if (!aiService.getInitStatus()) {
-        aiService
-          .init((progress) => {
-            if (mounted) setModelLoadProgress(progress);
-          })
-          .then(() => {
-            if (mounted) setIsModelReady(true);
-          })
-          .catch(() => {
-            if (mounted) setIsModelReady(true);
-          });
+  useEffect(() => {
+    let mounted = true;
+    if (!aiService.getInitStatus()) {
+      aiService
+        .init()
+        .then(() => { if (mounted) setIsModelReady(true); })
+        .catch(() => { if (mounted) setIsModelReady(true); });
+    } else {
+      setIsModelReady(true);
+    }
 
-        aiService.checkTimeTriggers().then((result) => {
-          if (mounted && result?.lesson) {
-            setCurrentLesson(result.lesson);
-            setTimeout(() => setShowLesson(true), 1000);
-          }
-        }).catch(() => {});
-      } else {
-        setIsModelReady(true);
+    // Daily check-in dialogue
+    (async () => {
+      try {
+        const state = await getCurrentPetState();
+        const reaction = getDailyCheckInReaction(state);
+        const text = await resolveDialogue(reaction.templateKey, reaction.slotValues);
+        if (mounted) setDialogue(text);
+      } catch {}
+    })();
+
+    // Check time-based triggers
+    aiService.checkTimeTriggers().then((result) => {
+      if (mounted && result?.lesson) {
+        setCurrentLesson(result.lesson);
+        setTimeout(() => setShowLesson(true), 1500);
       }
-      return () => { mounted = false; };
-    }, [])
-  );
+    }).catch(() => {});
 
-  const speak = useCallback((text: string) => {
-    if (inputModeRef.current !== 'voice') return;
-    Speech.stop();
-    Speech.speak(text, { language: 'en-US', rate: 0.95 });
+    // Check evolution
+    checkEvolution().catch(() => {});
+
+    return () => { mounted = false; };
   }, []);
-
-  const showBanner = (message: string, type: BannerType) => {
-    setBanner({ message, type, visible: true });
-    speak(message);
-  };
 
   const showXPPopup = (amount: number) => {
     setXpPopup({ amount, visible: true });
-    announceForScreenReader(`Earned ${amount} experience points`);
+    announceForScreenReader(`Earned ${amount} care points`);
     setTimeout(() => setXpPopup({ amount: 0, visible: false }), 1500);
   };
 
   const handleSend = async (text: string) => {
     setIsProcessing(true);
-
-    // Voice mode: confirm what was heard
-    if (inputModeRef.current === 'voice') {
-      Speech.stop();
-      Speech.speak(`Processing: ${text}`, { language: 'en-US', rate: 1.0 });
-    }
+    setShowTransactionSheet(false);
 
     try {
       const result = await aiService.processUserInput(text);
@@ -153,39 +134,51 @@ export default function HomeScreen() {
           lessons: '/lessons',
           challenges: '/challenges',
           home: '/',
-          'how-it-works': '/how-it-works',
+          history: '/history',
         };
         const route = routeMap[result.navigateTo];
         if (route && route !== '/') {
-          router.navigate(route as '/budget' | '/lessons' | '/challenges' | '/how-it-works');
+          router.navigate(route as '/budget' | '/lessons' | '/challenges' | '/history');
         }
         setIsProcessing(false);
         return;
       }
 
-      // Refresh profile after processing
-      await loadProfile();
+      // Refresh profile
+      await loadData();
 
-      const hasExceeded = result.executedFunctions.some(
-        (f) => f.functionName === 'check_budget_status' && (f.data as { exceeded?: boolean })?.exceeded
-      );
-      const bannerType: BannerType = hasExceeded ? 'warning' : result.executedFunctions.length > 0 ? 'success' : 'info';
-
-      // Trigger multi-sensory budget feedback after a transaction
-      const hasTransaction = result.executedFunctions.some((f) => f.functionName === 'log_transaction');
+      // Handle transaction — wire pet reactions
+      const hasTransaction = result.executedFunctions.some(f => f.functionName === 'log_transaction');
       if (hasTransaction) {
-        try {
-          const cats = await getBudgetCategories();
-          const totalSpent = cats.reduce((sum, c) => sum + c.spent, 0);
-          const totalLimit = cats.reduce((sum, c) => sum + c.weekly_limit, 0);
-          const state = getBudgetState(totalSpent, totalLimit);
-          playFullBudgetFeedback(state, totalSpent, totalLimit);
-        } catch {
-          // Non-critical — don't block UI
-        }
-      }
+        // Record engagement
+        await recordEngagement('transaction_log');
 
-      showBanner(result.responseText, bannerType);
+        // Recalculate pet state
+        const stateResult = await recalculatePetState('transaction');
+        setPetState(stateResult.newState);
+
+        // Fire multi-sensory feedback on state change
+        if (stateResult.stateChanged && petProfile) {
+          playFullPetFeedback(stateResult.newState, petProfile.name);
+        }
+
+        // Generate pet reaction dialogue
+        const logFn = result.executedFunctions.find(f => f.functionName === 'log_transaction');
+        if (logFn?.success) {
+          const data = logFn.data as { percentage?: number; budgetStatus?: { spent: number; weekly_limit: number } } | undefined;
+          const percentage = data?.percentage ?? 0;
+          const budgetStatus = data?.budgetStatus;
+          const remaining = budgetStatus ? budgetStatus.weekly_limit - budgetStatus.spent : 0;
+          const category = (logFn.params as Record<string, unknown>).category as string;
+          const amount = (logFn.params as Record<string, unknown>).amount as number;
+
+          const reaction = getTransactionReaction(category, amount, remaining, percentage);
+          const dialogueText = await resolveDialogue(reaction.templateKey, reaction.slotValues);
+          setDialogue(dialogueText);
+        }
+      } else if (result.responseText) {
+        setDialogue(result.responseText);
+      }
 
       if (result.xpEarned > 0) {
         showXPPopup(result.xpEarned);
@@ -196,7 +189,7 @@ export default function HomeScreen() {
         setTimeout(() => setShowLesson(true), 800);
       }
     } catch {
-      showBanner("Something went wrong. Try again!", 'error');
+      setDialogue("Hmm, something went wrong. Try again!");
     } finally {
       setIsProcessing(false);
     }
@@ -204,7 +197,6 @@ export default function HomeScreen() {
 
   const handleAcceptChallenge = async () => {
     if (!currentLesson?.challengeTemplate) return;
-
     const template = currentLesson.challengeTemplate;
     await createChallenge({
       title: template.title,
@@ -214,110 +206,226 @@ export default function HomeScreen() {
       duration_days: template.duration_days,
       xp_reward: template.xp_reward,
     });
-
     await updateUserXP(XP_AWARDS.ACCEPT_CHALLENGE);
     showXPPopup(XP_AWARDS.ACCEPT_CHALLENGE);
     setShowLesson(false);
-    showBanner(
-      `Challenge accepted! "${template.title}" — ${template.duration_days} days for +${template.xp_reward} XP`,
-      'success'
-    );
+    setDialogue(`Challenge accepted! "${template.title}" — let's do this!`);
   };
 
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-
-  const xpInfo = profile ? getXPForNextLevel(profile.xp) : null;
+  const petName = petProfile?.name ?? 'Buddy';
+  const stateColor = theme.colors.petStates[petState];
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.colors.base.background }]} edges={['top', 'bottom']}>
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView
-          ref={scrollRef}
-          contentContainerStyle={styles.container}
+          contentContainerStyle={[styles.container, { padding: theme.spacing.lg }]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* 1. Title block */}
-          <Animated.View entering={FadeIn.duration(600)} style={styles.titleBlock}>
-            <Text style={styles.appTitle} accessibilityRole="header">MICRO{'\n'}LESSONS</Text>
-            <View style={styles.titleDivider} />
-            {!isModelReady && (
-              <Text style={styles.loadingText}>
-                Loading AI... {Math.round(modelLoadProgress * 100)}%
-              </Text>
-            )}
-          </Animated.View>
+          {/* Settings gear */}
+          <Pressable
+            style={styles.settingsButton}
+            onPress={() => router.push('/settings/profile' as any)}
+            accessibilityLabel="Settings"
+            accessibilityRole="button"
+          >
+            <Text style={[styles.settingsIcon, { color: theme.colors.base.textSecondary }]}>
+              {'[=]'}
+            </Text>
+          </Pressable>
 
-          {/* 2. Greeting */}
-          <Text style={styles.greeting}>
-            {greeting}, {profile?.name ?? 'there'}
-          </Text>
-
-          {/* 3. Voice/Text Toggle — hero element */}
-          <Animated.View entering={FadeInDown.delay(100).duration(400)}>
-            <ModeToggle mode={inputMode} onModeChange={handleModeChange} />
-          </Animated.View>
-
-          {/* 4. Input Area — conditional */}
-          <Animated.View entering={FadeInDown.delay(200).duration(400)}>
-            {inputMode === 'voice' ? (
-              <VoiceInput
-                onTranscript={handleSend}
-                isProcessing={isProcessing}
-              />
-            ) : (
-              <ChatInput
-                onSend={handleSend}
-                isProcessing={isProcessing}
-                embedded
-                prominent
-              />
-            )}
-          </Animated.View>
-
-          {/* 5. Confirmation Banner */}
-          <ConfirmationBanner
-            message={banner.message}
-            type={banner.type}
-            visible={banner.visible}
-            onDismiss={() => setBanner((b) => ({ ...b, visible: false }))}
-          />
-
-          {/* 6. Menu Chips */}
-          <Animated.View entering={FadeInDown.delay(300).duration(400)}>
-            <MenuChips />
-          </Animated.View>
-
-          {/* 7. Level/XP/Streak Row */}
-          {profile && (
-            <View
-              style={styles.levelRow}
-              accessible={true}
-              accessibilityLabel={`Level ${profile.level}${xpInfo ? `, ${xpInfo.current} of ${xpInfo.needed} experience points` : ''}${profile.streak_days > 0 ? `, ${profile.streak_days} day streak` : ''}`}
-            >
-              <View style={styles.levelPill}>
-                <Text style={styles.levelText}>Lv {profile.level}</Text>
-              </View>
-              {xpInfo && (
-                <Text style={styles.xpText}>
-                  {xpInfo.current}/{xpInfo.needed} XP
-                </Text>
-              )}
-              {profile.streak_days > 0 && (
-                <Text style={styles.streakText} importantForAccessibility="no">🔥 {profile.streak_days}</Text>
-              )}
-            </View>
+          {/* AI loading indicator */}
+          {!isModelReady && (
+            <Text style={[styles.loadingText, { color: theme.colors.base.textSecondary }]}>
+              Loading AI...
+            </Text>
           )}
+
+          {/* Pet Terminal */}
+          <Animated.View entering={FadeIn.duration(600)}>
+            <PetTerminal petState={petState} petName={petName} />
+          </Animated.View>
+
+          {/* Speech Bubble */}
+          {dialogue ? (
+            <Animated.View entering={FadeInDown.delay(200).duration(400)}>
+              <SpeechBubble message={dialogue} />
+            </Animated.View>
+          ) : null}
+
+          {/* Primary CTA: Log Spending */}
+          <Animated.View entering={FadeInDown.delay(300).duration(400)}>
+            <Pressable
+              onPress={() => setShowTransactionSheet(true)}
+              disabled={isProcessing}
+              accessibilityLabel="Log spending"
+              accessibilityRole="button"
+              accessibilityHint="Open the transaction input"
+              style={({ pressed }) => [
+                styles.primaryButton,
+                {
+                  backgroundColor: pressed ? theme.colors.interactive.primaryPressed : theme.colors.interactive.primary,
+                  borderRadius: theme.radius.xl,
+                  borderBottomWidth: pressed ? 0 : 3,
+                  borderBottomColor: theme.colors.interactive.primaryPressed,
+                  opacity: isProcessing ? 0.6 : 1,
+                },
+                pressed ? theme.shadows.pressed : theme.shadows.md,
+              ]}
+            >
+              <Text style={[styles.primaryButtonText, { color: theme.colors.interactive.primaryText }]}>
+                Log Spending
+              </Text>
+            </Pressable>
+          </Animated.View>
+
+          {/* Secondary Buttons */}
+          <View style={styles.secondaryRow}>
+            <Pressable
+              onPress={() => router.navigate('/budget')}
+              accessibilityLabel="View budget"
+              accessibilityRole="button"
+              style={({ pressed }) => [
+                styles.secondaryButton,
+                {
+                  backgroundColor: pressed ? theme.colors.interactive.secondaryPressed : theme.colors.interactive.secondary,
+                  borderRadius: theme.radius.xl,
+                  borderBottomWidth: pressed ? 0 : 2,
+                  borderBottomColor: theme.colors.interactive.secondaryPressed,
+                },
+                pressed ? theme.shadows.pressed : theme.shadows.sm,
+              ]}
+            >
+              <Text style={[styles.secondaryButtonText, { color: theme.colors.interactive.secondaryText }]}>
+                Budget
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => router.navigate('/challenges')}
+              accessibilityLabel="View challenges"
+              accessibilityRole="button"
+              style={({ pressed }) => [
+                styles.secondaryButton,
+                {
+                  backgroundColor: pressed ? theme.colors.interactive.secondaryPressed : theme.colors.interactive.secondary,
+                  borderRadius: theme.radius.xl,
+                  borderBottomWidth: pressed ? 0 : 2,
+                  borderBottomColor: theme.colors.interactive.secondaryPressed,
+                },
+                pressed ? theme.shadows.pressed : theme.shadows.sm,
+              ]}
+            >
+              <Text style={[styles.secondaryButtonText, { color: theme.colors.interactive.secondaryText }]}>
+                Challenges
+              </Text>
+            </Pressable>
+          </View>
+
+          {/* Status Bar */}
+          <Pressable
+            onPress={() => router.navigate('/history')}
+            accessibilityLabel={`Status: ${stateColor.label}. ${profile?.streak_days ?? 0} day streak. Tap for history.`}
+            style={[styles.statusBar, { borderColor: theme.colors.base.border }]}
+          >
+            <View style={[styles.statusDot, { backgroundColor: stateColor.medium }]} />
+            <Text style={[styles.statusText, { color: theme.colors.base.textSecondary }]}>
+              {stateColor.label}
+            </Text>
+            <Text style={[styles.statusSeparator, { color: theme.colors.base.border }]}>
+              {' · '}
+            </Text>
+            <Text style={[styles.statusText, { color: theme.colors.base.textSecondary }]}>
+              Streak: {profile?.streak_days ?? 0}d
+            </Text>
+          </Pressable>
         </ScrollView>
+
+        {/* Transaction Input Bottom Sheet */}
+        <Modal
+          visible={showTransactionSheet}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setShowTransactionSheet(false)}
+        >
+          <Pressable style={styles.sheetOverlay} onPress={() => setShowTransactionSheet(false)}>
+            <Pressable style={styles.sheetBlockTap} onPress={() => {}}>
+              <Animated.View
+                entering={SlideInDown.duration(300)}
+                exiting={SlideOutDown.duration(200)}
+                style={[
+                  styles.sheet,
+                  {
+                    backgroundColor: theme.colors.base.background,
+                    borderTopLeftRadius: theme.radius.lg,
+                    borderTopRightRadius: theme.radius.lg,
+                  },
+                  theme.shadows.lg,
+                ]}
+              >
+                <View style={[styles.sheetHandle, { backgroundColor: theme.colors.base.border }]} />
+                <Text
+                  style={[styles.sheetTitle, {
+                    color: theme.colors.base.textPrimary,
+                    fontFamily: theme.fontsLoaded ? theme.fonts.heading : undefined,
+                  }]}
+                >
+                  Log a transaction
+                </Text>
+                <Text style={[styles.sheetHint, { color: theme.colors.base.textSecondary }]}>
+                  Say or type what you spent:
+                </Text>
+
+                {/* Input mode toggle */}
+                <View style={styles.modeRow}>
+                  <Pressable
+                    onPress={() => setInputMode('text')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Text input mode"
+                    style={[
+                      styles.modeTab,
+                      {
+                        backgroundColor: inputMode === 'text' ? theme.colors.interactive.primary : 'transparent',
+                        borderRadius: theme.radius.sm,
+                      },
+                    ]}
+                  >
+                    <Text style={{ color: inputMode === 'text' ? theme.colors.interactive.primaryText : theme.colors.base.textSecondary, fontSize: theme.typeScale.bodyLarge }}>
+                      Text
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => setInputMode('voice')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Voice input mode"
+                    style={[
+                      styles.modeTab,
+                      {
+                        backgroundColor: inputMode === 'voice' ? theme.colors.interactive.primary : 'transparent',
+                        borderRadius: theme.radius.sm,
+                      },
+                    ]}
+                  >
+                    <Text style={{ color: inputMode === 'voice' ? theme.colors.interactive.primaryText : theme.colors.base.textSecondary, fontSize: theme.typeScale.bodyLarge }}>
+                      Voice
+                    </Text>
+                  </Pressable>
+                </View>
+
+                {inputMode === 'voice' ? (
+                  <VoiceInput onTranscript={handleSend} isProcessing={isProcessing} />
+                ) : (
+                  <ChatInput onSend={handleSend} isProcessing={isProcessing} embedded prominent />
+                )}
+              </Animated.View>
+            </Pressable>
+          </Pressable>
+        </Modal>
 
         {/* XP Popup */}
         <XPPopup amount={xpPopup.amount} visible={xpPopup.visible} />
 
-        {/* Micro Lesson Modal */}
+        {/* Lesson Modal */}
         <MicroLessonModal
           visible={showLesson}
           lesson={currentLesson}
@@ -330,71 +438,97 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-  flex: {
-    flex: 1,
-  },
+  safeArea: { flex: 1 },
+  flex: { flex: 1 },
   container: {
     flexGrow: 1,
-    justifyContent: 'center',
-    paddingHorizontal: Spacing.xxl,
-    gap: Spacing.lg,
+    gap: 16,
   },
-  titleBlock: {
+  settingsButton: {
+    alignSelf: 'flex-end',
+    padding: 8,
+    minWidth: 48,
+    minHeight: 48,
     alignItems: 'center',
-    marginBottom: Spacing.sm,
+    justifyContent: 'center',
   },
-  appTitle: {
-    fontSize: 26,
-    fontWeight: '300',
-    letterSpacing: 8,
-    color: Colors.text,
-    textAlign: 'center',
-    lineHeight: 34,
+  settingsIcon: { fontSize: 18, fontWeight: '600' },
+  loadingText: { textAlign: 'center', fontSize: 14 },
+  primaryButton: {
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    alignItems: 'center',
+    minHeight: 48,
   },
-  titleDivider: {
-    width: 40,
-    height: 2,
-    backgroundColor: Colors.primary,
-    marginTop: Spacing.md,
-    borderRadius: 1,
+  primaryButtonText: {
+    fontSize: 18,
+    fontWeight: '700',
   },
-  loadingText: {
-    fontSize: FontSize.xs,
-    color: Colors.warning,
-    marginTop: Spacing.sm,
+  secondaryRow: {
+    flexDirection: 'row',
+    gap: 12,
   },
-  greeting: {
-    fontSize: FontSize.body,
-    color: Colors.textSecondary,
-    textAlign: 'center',
+  secondaryButton: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+    minHeight: 48,
   },
-  levelRow: {
+  secondaryButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  statusBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: Spacing.md,
-    marginTop: Spacing.sm,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    gap: 6,
   },
-  levelPill: {
-    backgroundColor: Colors.levelPurple,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.full,
+  statusDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
   },
-  levelText: {
-    fontSize: FontSize.xs,
+  statusText: { fontSize: 14 },
+  statusSeparator: { fontSize: 14 },
+  // Bottom sheet
+  sheetOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  sheetBlockTap: {},
+  sheet: {
+    padding: 24,
+    paddingBottom: 40,
+    gap: 16,
+  },
+  sheetHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 8,
+  },
+  sheetTitle: {
+    fontSize: 20,
     fontWeight: '700',
-    color: '#FFFFFF',
+    textAlign: 'center',
   },
-  xpText: {
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
+  sheetHint: {
+    fontSize: 14,
+    textAlign: 'center',
   },
-  streakText: {
-    fontSize: FontSize.sm,
+  modeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+  },
+  modeTab: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    minHeight: 36,
   },
 });

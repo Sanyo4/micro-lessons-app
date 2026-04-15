@@ -47,7 +47,7 @@ export default function VoiceIncomeScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.inner}>
-        <OnboardingProgress currentStep={3} totalSteps={7} />
+        <OnboardingProgress currentStep={3} totalSteps={8} />
 
         <Text style={styles.title} accessibilityRole="header">Monthly Income</Text>
         <Text style={styles.subtitle}>What's your monthly take-home pay?</Text>

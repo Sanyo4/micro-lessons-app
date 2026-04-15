@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
 
 export interface OnboardingData {
+  petName: string;
   userName: string;
   inputPreference: 'voice' | 'text';
   motivationFocuses: string[];
@@ -18,6 +19,7 @@ interface OnboardingContextType {
 }
 
 const DEFAULT_DATA: OnboardingData = {
+  petName: 'Buddy',
   userName: '',
   inputPreference: 'voice',
   motivationFocuses: [],

@@ -6,9 +6,13 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "proxy": "node scripts/cors-proxy.js",
+    "dev:web": "npx concurrently \"npm run proxy\" \"npm run web\""
   },
   "dependencies": {
+    "@expo-google-fonts/jetbrains-mono": "^0.4.1",
+    "@expo-google-fonts/nunito": "^0.4.2",
     "babel-preset-expo": "^55.0.10",
     "expo": "~55.0.4",
     "expo-av": "^16.0.8",
@@ -16,6 +20,7 @@
     "expo-crypto": "~55.0.10",
     "expo-haptics": "~55.0.9",
     "expo-linking": "^55.0.7",
+    "expo-notifications": "~55.0.19",
     "expo-router": "^55.0.3",
     "expo-speech": "^55.0.8",
     "expo-speech-recognition": "^3.1.1",

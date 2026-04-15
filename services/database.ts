@@ -88,6 +88,65 @@ async function initializeDatabase(database: SQLite.SQLiteDatabase): Promise<void
   try {
     await database.execAsync('ALTER TABLE user_profile ADD COLUMN flexible_budget REAL DEFAULT 0');
   } catch (_) { /* column already exists */ }
+
+  // === Pet & Accessibility tables (Brief 03) ===
+  await database.execAsync(`
+    CREATE TABLE IF NOT EXISTS pet_profile (
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      name TEXT NOT NULL DEFAULT 'Buddy',
+      current_state TEXT NOT NULL DEFAULT 'neutral'
+        CHECK(current_state IN ('thriving','happy','neutral','worried','critical')),
+      evolution_tier TEXT NOT NULL DEFAULT 'egg'
+        CHECK(evolution_tier IN ('egg','baby','child','teen','adult','elder')),
+      evolution_path TEXT NOT NULL DEFAULT 'standard'
+        CHECK(evolution_path IN ('flourishing','standard','struggling')),
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS pet_state_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      state TEXT NOT NULL CHECK(state IN ('thriving','happy','neutral','worried','critical')),
+      budget_score REAL NOT NULL,
+      engagement_bonus REAL NOT NULL DEFAULT 0,
+      combined_score REAL NOT NULL,
+      trigger TEXT,
+      timestamp TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS daily_care (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      date TEXT NOT NULL UNIQUE,
+      transactions_logged INTEGER NOT NULL DEFAULT 0,
+      lessons_completed INTEGER NOT NULL DEFAULT 0,
+      challenges_completed INTEGER NOT NULL DEFAULT 0,
+      pet_state_end_of_day TEXT,
+      care_quality TEXT CHECK(care_quality IN ('good','normal','poor')),
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS engagement_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_type TEXT NOT NULL,
+      timestamp TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS accessibility_prefs (
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      haptic_intensity TEXT DEFAULT 'medium'
+        CHECK(haptic_intensity IN ('off','light','medium','strong')),
+      tonal_volume TEXT DEFAULT 'normal'
+        CHECK(tonal_volume IN ('off','quiet','normal','loud')),
+      bloop_sound INTEGER DEFAULT 1,
+      tts_speed TEXT DEFAULT 'normal'
+        CHECK(tts_speed IN ('slow','normal','fast')),
+      text_size TEXT DEFAULT 'medium'
+        CHECK(text_size IN ('small','medium','large','extra_large')),
+      high_contrast INTEGER DEFAULT 0,
+      reduced_motion INTEGER DEFAULT 0,
+      simplified_language INTEGER DEFAULT 0,
+      verbose_screenreader INTEGER DEFAULT 0
+    );
+  `);
 }
 
 // ========== App Settings ==========
@@ -374,6 +433,11 @@ export async function resetApp(): Promise<void> {
     DELETE FROM fixed_expenses;
     DELETE FROM motivation_focuses;
     DELETE FROM app_settings;
+    DELETE FROM pet_profile;
+    DELETE FROM pet_state_history;
+    DELETE FROM daily_care;
+    DELETE FROM engagement_events;
+    DELETE FROM accessibility_prefs;
   `);
 }
 
@@ -441,4 +505,209 @@ export interface FixedExpense {
   name: string;
   amount: number;
   frequency: string;
+}
+
+export interface PetProfile {
+  id: number;
+  name: string;
+  current_state: string;
+  evolution_tier: string;
+  evolution_path: string;
+  created_at: string;
+}
+
+export interface PetStateHistory {
+  id: number;
+  state: string;
+  budget_score: number;
+  engagement_bonus: number;
+  combined_score: number;
+  trigger: string;
+  timestamp: string;
+}
+
+export interface DailyCare {
+  id: number;
+  date: string;
+  transactions_logged: number;
+  lessons_completed: number;
+  challenges_completed: number;
+  pet_state_end_of_day: string | null;
+  care_quality: string | null;
+  created_at: string;
+}
+
+export interface EngagementEvent {
+  id: number;
+  event_type: string;
+  timestamp: string;
+}
+
+export interface AccessibilityPrefs {
+  id: number;
+  haptic_intensity: string;
+  tonal_volume: string;
+  bloop_sound: number;
+  tts_speed: string;
+  text_size: string;
+  high_contrast: number;
+  reduced_motion: number;
+  simplified_language: number;
+  verbose_screenreader: number;
+}
+
+// ========== Pet Profile ==========
+
+export async function getPetProfile(): Promise<PetProfile | null> {
+  const database = await getDatabase();
+  const result = await database.getFirstAsync<PetProfile>('SELECT * FROM pet_profile WHERE id = 1');
+  return result ?? null;
+}
+
+export async function createPetProfile(name: string): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync(
+    'INSERT OR REPLACE INTO pet_profile (id, name, current_state, evolution_tier, evolution_path) VALUES (1, ?, ?, ?, ?)',
+    [name, 'neutral', 'egg', 'standard']
+  );
+}
+
+export async function updatePetProfile(partial: Partial<Omit<PetProfile, 'id' | 'created_at'>>): Promise<void> {
+  const database = await getDatabase();
+  const sets: string[] = [];
+  const values: (string | number)[] = [];
+  if (partial.name !== undefined) { sets.push('name = ?'); values.push(partial.name); }
+  if (partial.current_state !== undefined) { sets.push('current_state = ?'); values.push(partial.current_state); }
+  if (partial.evolution_tier !== undefined) { sets.push('evolution_tier = ?'); values.push(partial.evolution_tier); }
+  if (partial.evolution_path !== undefined) { sets.push('evolution_path = ?'); values.push(partial.evolution_path); }
+  if (sets.length === 0) return;
+  await database.runAsync(`UPDATE pet_profile SET ${sets.join(', ')} WHERE id = 1`, values);
+}
+
+// ========== Pet State History ==========
+
+export async function addPetStateHistory(entry: {
+  state: string;
+  budget_score: number;
+  engagement_bonus: number;
+  combined_score: number;
+  trigger: string;
+}): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync(
+    'INSERT INTO pet_state_history (state, budget_score, engagement_bonus, combined_score, trigger) VALUES (?, ?, ?, ?, ?)',
+    [entry.state, entry.budget_score, entry.engagement_bonus, entry.combined_score, entry.trigger]
+  );
+}
+
+export async function getPetStateHistory(days: number): Promise<PetStateHistory[]> {
+  const database = await getDatabase();
+  return database.getAllAsync<PetStateHistory>(
+    `SELECT * FROM pet_state_history WHERE timestamp >= datetime('now', '-' || ? || ' days') ORDER BY timestamp DESC`,
+    [days]
+  );
+}
+
+// ========== Daily Care ==========
+
+export async function getDailyCare(date: string): Promise<DailyCare | null> {
+  const database = await getDatabase();
+  const result = await database.getFirstAsync<DailyCare>(
+    'SELECT * FROM daily_care WHERE date = ?',
+    [date]
+  );
+  return result ?? null;
+}
+
+export async function upsertDailyCare(record: {
+  date: string;
+  transactions_logged?: number;
+  lessons_completed?: number;
+  challenges_completed?: number;
+  pet_state_end_of_day?: string;
+  care_quality?: string;
+}): Promise<void> {
+  const database = await getDatabase();
+  const existing = await getDailyCare(record.date);
+  if (existing) {
+    const sets: string[] = [];
+    const values: (string | number)[] = [];
+    if (record.transactions_logged !== undefined) { sets.push('transactions_logged = ?'); values.push(record.transactions_logged); }
+    if (record.lessons_completed !== undefined) { sets.push('lessons_completed = ?'); values.push(record.lessons_completed); }
+    if (record.challenges_completed !== undefined) { sets.push('challenges_completed = ?'); values.push(record.challenges_completed); }
+    if (record.pet_state_end_of_day !== undefined) { sets.push('pet_state_end_of_day = ?'); values.push(record.pet_state_end_of_day); }
+    if (record.care_quality !== undefined) { sets.push('care_quality = ?'); values.push(record.care_quality); }
+    if (sets.length === 0) return;
+    values.push(record.date);
+    await database.runAsync(`UPDATE daily_care SET ${sets.join(', ')} WHERE date = ?`, values);
+  } else {
+    await database.runAsync(
+      'INSERT INTO daily_care (date, transactions_logged, lessons_completed, challenges_completed, pet_state_end_of_day, care_quality) VALUES (?, ?, ?, ?, ?, ?)',
+      [
+        record.date,
+        record.transactions_logged ?? 0,
+        record.lessons_completed ?? 0,
+        record.challenges_completed ?? 0,
+        record.pet_state_end_of_day ?? null,
+        record.care_quality ?? null,
+      ]
+    );
+  }
+}
+
+export async function getDailyCareRange(startDate: string, endDate: string): Promise<DailyCare[]> {
+  const database = await getDatabase();
+  return database.getAllAsync<DailyCare>(
+    'SELECT * FROM daily_care WHERE date >= ? AND date <= ? ORDER BY date ASC',
+    [startDate, endDate]
+  );
+}
+
+// ========== Engagement Events ==========
+
+export async function addEngagementEvent(eventType: string): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync(
+    'INSERT INTO engagement_events (event_type) VALUES (?)',
+    [eventType]
+  );
+}
+
+export async function getEngagementEventsSince(timestamp: string): Promise<EngagementEvent[]> {
+  const database = await getDatabase();
+  return database.getAllAsync<EngagementEvent>(
+    'SELECT * FROM engagement_events WHERE timestamp >= ? ORDER BY timestamp DESC',
+    [timestamp]
+  );
+}
+
+// ========== Accessibility Preferences ==========
+
+export async function getAccessibilityPrefs(): Promise<AccessibilityPrefs | null> {
+  const database = await getDatabase();
+  const result = await database.getFirstAsync<AccessibilityPrefs>('SELECT * FROM accessibility_prefs WHERE id = 1');
+  return result ?? null;
+}
+
+export async function upsertAccessibilityPrefs(partial: Record<string, unknown>): Promise<void> {
+  const database = await getDatabase();
+  const existing = await getAccessibilityPrefs();
+  if (existing) {
+    const sets: string[] = [];
+    const values: (string | number | null)[] = [];
+    for (const [key, val] of Object.entries(partial)) {
+      sets.push(`${key} = ?`);
+      values.push(val as string | number | null);
+    }
+    if (sets.length === 0) return;
+    await database.runAsync(`UPDATE accessibility_prefs SET ${sets.join(', ')} WHERE id = 1`, values);
+  } else {
+    const cols = ['id', ...Object.keys(partial)];
+    const placeholders = cols.map(() => '?').join(', ');
+    const values = [1, ...Object.values(partial)] as (string | number | null)[];
+    await database.runAsync(
+      `INSERT INTO accessibility_prefs (${cols.join(', ')}) VALUES (${placeholders})`,
+      values
+    );
+  }
 }

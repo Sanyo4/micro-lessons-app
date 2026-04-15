@@ -87,3 +87,45 @@ export async function playFullBudgetFeedback(
   // 3. TTS announcement
   await speakBudgetState(state, spent, limit);
 }
+
+// === Pet State Multi-Sensory Feedback (Brief 02) ===
+import type { PetMood } from './petState';
+import { playPetHaptic } from './haptics';
+import { playPetTone } from './tonalAudio';
+
+const PET_TTS_MESSAGES: Record<PetMood, (name: string) => string> = {
+  thriving: (n) => `${n} is now thriving! Your budget is looking great.`,
+  happy: (n) => `${n} is now happy. You're doing well.`,
+  neutral: (n) => `${n} is feeling okay. Keep going!`,
+  worried: (n) => `${n} is worried. Some of your spending categories are getting tight.`,
+  critical: (n) => `${n} is not doing well. Your budget needs attention.`,
+};
+
+/**
+ * Coordinated multi-sensory pet state feedback:
+ * 1. Haptic fires first
+ * 2. Tonal cue plays
+ * 3. TTS announces state transition
+ */
+export async function playFullPetFeedback(
+  state: PetMood,
+  petName: string,
+): Promise<void> {
+  // 1. Haptic
+  playPetHaptic(state);
+
+  // 2. Tonal cue
+  await playPetTone(state);
+
+  // Small gap
+  await new Promise((r) => setTimeout(r, 300));
+
+  // 3. TTS
+  const isSpeaking = await Speech.isSpeakingAsync();
+  if (!isSpeaking) {
+    Speech.speak(PET_TTS_MESSAGES[state](petName), {
+      language: 'en-US',
+      rate: 0.9,
+    });
+  }
+}

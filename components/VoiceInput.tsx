@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -26,6 +26,15 @@ const RING_DURATION = 1500;
 export default function VoiceInput({ onTranscript, isProcessing }: VoiceInputProps) {
   const [recognizing, setRecognizing] = useState(false);
   const [transcript, setTranscript] = useState('');
+  const [webSpeechAvailable, setWebSpeechAvailable] = useState(true);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      const available = typeof window !== 'undefined' &&
+        ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window);
+      setWebSpeechAvailable(available);
+    }
+  }, []);
 
   // Pulse ring animations
   const ring1Scale = useSharedValue(1);
@@ -125,6 +134,16 @@ export default function VoiceInput({ onTranscript, isProcessing }: VoiceInputPro
       continuous: false,
     });
   };
+
+  if (Platform.OS === 'web' && !webSpeechAvailable) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.transcript}>
+          Voice input requires Chrome or Edge. Use text input instead.
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>

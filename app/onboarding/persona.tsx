@@ -48,7 +48,7 @@ export default function PersonaScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.inner}>
-        <OnboardingProgress currentStep={4} totalSteps={7} />
+        <OnboardingProgress currentStep={4} totalSteps={8} />
 
         <Text style={styles.title} accessibilityRole="header">Communication Style</Text>
         <Text style={styles.subtitle}>How should we talk about money?</Text>

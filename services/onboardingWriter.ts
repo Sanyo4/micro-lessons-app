@@ -1,4 +1,4 @@
-import { getDatabase, updateAppSettings, addFixedExpense, clearFixedExpenses, setMotivationFocuses } from './database';
+import { getDatabase, updateAppSettings, addFixedExpense, clearFixedExpenses, setMotivationFocuses, createPetProfile, upsertAccessibilityPrefs } from './database';
 import { getPlanById, getDefaultPlan } from '../data/plans';
 import type { OnboardingData } from './onboardingContext';
 
@@ -37,5 +37,21 @@ export async function writeOnboardingData(data: OnboardingData): Promise<void> {
     financial_persona: data.financialPersona,
     selected_plan_id: data.selectedPlanId || plan.id,
     input_preference: data.inputPreference,
+  });
+
+  // 6. Create pet profile
+  await createPetProfile(data.petName || 'Buddy');
+
+  // 7. Create default accessibility preferences
+  await upsertAccessibilityPrefs({
+    haptic_intensity: 'medium',
+    tonal_volume: 'normal',
+    bloop_sound: 1,
+    tts_speed: 'normal',
+    text_size: 'medium',
+    high_contrast: 0,
+    reduced_motion: 0,
+    simplified_language: 0,
+    verbose_screenreader: 0,
   });
 }
