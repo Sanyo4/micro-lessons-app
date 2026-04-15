@@ -84,27 +84,133 @@ class GemmaAIService {
   }
 
   /**
-   * Phase 1: Parse user input and identify function calls.
-   * Executes non-transaction functions immediately.
-   * Defers log_transaction for user confirmation.
+   * Phase 1: Parse user input — deterministic routing first, Gemma only for spending NLU.
+   *
+   * Architecture (in priority order):
+   * 1. ConversationContext intercept (confirmation, games, lesson offers)
+   * 2. Deterministic keyword router (instant, 100% reliable)
+   * 3. Gemma LLM (only for log_transaction — the one task needing NLU)
+   * 4. Fallback keyword parser (catches Gemma misses for spending)
    */
   async parseUserInput(userText: string): Promise<AIResult> {
-    // Check conversation context first (confirmation, games)
+    // 1. Conversation context intercept (multi-step flows)
     const contextResult = conversationContext.intercept(userText);
     if (contextResult.handled) {
       return this.contextResultToAIResult(contextResult);
     }
 
+    const lowerText = userText.toLowerCase().trim();
+
+    // 2. Deterministic keyword router — handles ~80% of intents instantly
+    const deterministicResult = await this.deterministicRoute(lowerText, userText);
+    if (deterministicResult) return deterministicResult;
+
+    // 3. Gemma LLM — only for spending/transaction parsing (NLU)
+    // This is the one task where keyword matching isn't enough:
+    // "spent 5 quid on a flat white" → {category: 'coffee', amount: 5, description: 'flat white'}
+    const gemmaResult = await this.parseWithGemma(userText);
+    if (gemmaResult) return gemmaResult;
+
+    // 4. Fallback — keyword-based spending detection
+    return this.fallbackSpendingParse(userText);
+  }
+
+  /**
+   * Deterministic router — keyword matching for all non-spending intents.
+   * Returns null if no match (passes through to Gemma).
+   */
+  private async deterministicRoute(lower: string, original: string): Promise<AIResult | null> {
+    // Adjust budget (must check before generic "budget" match)
+    const adjustKeywords = ['adjust', 'change limit', 'increase', 'decrease', 'raise', 'lower'];
+    if (adjustKeywords.some((kw) => lower.includes(kw))) {
+      const cats = await getBudgetCategories();
+      const matchedCat = cats.find((c) => lower.includes(c.name.toLowerCase()) || lower.includes(c.id.toLowerCase()));
+      if (matchedCat) {
+        const direction = lower.includes('increase') || lower.includes('raise') || lower.includes('more')
+          ? 'increase'
+          : lower.includes('decrease') || lower.includes('lower') || lower.includes('less') || lower.includes('reduce')
+            ? 'decrease'
+            : undefined;
+        const amountMatch = original.match(/(?:by\s+)?(\d+(?:\.\d{1,2})?)/);
+        const args: Record<string, unknown> = { category: matchedCat.id };
+        if (direction) args.direction = direction;
+        if (amountMatch) args.amount = parseFloat(amountMatch[1]);
+
+        return this.executeDeterministic('adjust_budget_limit', args);
+      }
+    }
+
+    // Category detail (must check before generic "budget")
+    const categoryDetailKeywords = ['tell me about', 'details for', 'how much', 'about my'];
+    if (categoryDetailKeywords.some((kw) => lower.includes(kw))) {
+      const cats = await getBudgetCategories();
+      const matchedCat = cats.find((c) => lower.includes(c.name.toLowerCase()) || lower.includes(c.id.toLowerCase()));
+      if (matchedCat) {
+        return this.executeDeterministic('get_category_detail', { category: matchedCat.id });
+      }
+    }
+
+    // Static intent routes — order: specific phrases before generic words
+    const routes: Array<{ fn: string; args: Record<string, unknown>; keywords: string[] }> = [
+      { fn: 'get_help', args: {}, keywords: ['help', 'what can i do', 'what can i say'] },
+      { fn: 'open_settings', args: {}, keywords: ['settings', 'open settings', 'preferences', 'edit name', 'rename'] },
+      { fn: 'accept_challenge', args: {}, keywords: ['start a challenge', 'accept challenge', 'new quest', 'start quest', 'start challenge'] },
+      { fn: 'get_budget_overview', args: {}, keywords: ['budget', 'budgets', 'how much left', 'overview', "how's my budget"] },
+      { fn: 'get_quest_log', args: {}, keywords: ['quest log', 'quests', 'quest progress', 'challenges', 'my challenges', 'show quests'] },
+      { fn: 'check_pet_status', args: {}, keywords: ['how is buddy', "how's buddy", 'pet status', 'how are you'] },
+      { fn: 'get_recent_transactions', args: {}, keywords: ['recent', 'last transactions', 'what did i spend', 'history', 'what have i spent'] },
+      { fn: 'get_mood_history', args: {}, keywords: ['mood history', 'mood', 'how has buddy been'] },
+      { fn: 'accept_challenge', args: {}, keywords: ['challenge'] }, // generic "challenge" as last resort
+    ];
+
+    for (const route of routes) {
+      if (route.keywords.some((kw) => lower.includes(kw))) {
+        return this.executeDeterministic(route.fn, route.args);
+      }
+    }
+
+    // Savings projection — needs number extraction
+    const saveMatch = lower.match(/(?:save|saving)\s*(?:\u00A3)?(\d+(?:\.\d{1,2})?)/);
+    if (saveMatch) {
+      const period = lower.includes('year') ? 'yearly' : lower.includes('week') ? 'weekly' : 'monthly';
+      return this.executeDeterministic('get_savings_projection', { daily_amount: parseFloat(saveMatch[1]), period });
+    }
+
+    return null; // No deterministic match — pass to Gemma
+  }
+
+  /**
+   * Execute a deterministically-routed function and return as AIResult.
+   */
+  private async executeDeterministic(fn: string, args: Record<string, unknown>): Promise<AIResult> {
+    const fnResult = await executeFunctionCall({ name: fn, arguments: args });
+    return {
+      responseText: fnResult.responseText || '',
+      executedFunctions: [fnResult],
+      lesson: null,
+      xpEarned: fnResult.xpEarned,
+      contentType: fnResult.contentType,
+    };
+  }
+
+  /**
+   * Gemma LLM — only called for spending/transaction parsing.
+   * Stripped-down prompt: only log_transaction + check_budget_status + get_spending_summary.
+   * Lower temperature (0.0), topK=1 for greedy deterministic decoding.
+   */
+  private async parseWithGemma(userText: string): Promise<AIResult | null> {
+    if (!this.isInitialized || !this.model) return null;
+
     const budgetState = await getBudgetCategories();
     const categoryIds = budgetState.map((c) => c.id);
     const budgetContext = this.buildBudgetContext(budgetState);
 
-    const settings = await getAppSettings();
-    const personaPrompt = PERSONA_PROMPTS[settings?.financial_persona || 'beginner'] || PERSONA_PROMPTS.beginner;
+    // Only send spending-related functions to Gemma — its strength
+    const spendingFunctions = getUserFacingFunctions(categoryIds).filter(
+      (fn) => ['log_transaction', 'check_budget_status', 'get_spending_summary', 'get_category_detail'].includes(fn.name)
+    );
 
-    const userFunctions = getUserFacingFunctions(categoryIds);
-
-    const tools: CactusLMTool[] = userFunctions.map((fn) => ({
+    const tools: CactusLMTool[] = spendingFunctions.map((fn) => ({
       name: fn.name,
       description: fn.description,
       parameters: {
@@ -122,105 +228,73 @@ class GemmaAIService {
     const messages: CactusLMMessage[] = [
       {
         role: 'system',
-        content: `You are a financial assistant for a budgeting app. Parse the user's natural language input and call the appropriate function.
-
-When the user reports spending, call log_transaction with the category, amount, and description.
-When the user asks about their overall budget, call get_budget_overview.
-When the user asks about a specific category, call get_category_detail or check_budget_status.
-When the user wants to change a budget limit, call adjust_budget_limit.
-When the user asks what they spent recently, call get_recent_transactions.
-When the user asks about quests or challenges, call get_quest_log.
-When the user wants to start a challenge, call accept_challenge.
-When the user asks about their pet, call check_pet_status.
-When the user asks about mood history, call get_mood_history.
-When the user asks about savings potential, call get_savings_projection.
-When the user asks for help or what they can do, call get_help.
-
-${personaPrompt}
-
-Current budget state:
+        content: `Parse spending input. Extract the category, amount, and description.
+Call log_transaction for spending. Call check_budget_status or get_spending_summary for queries.
+Categories: ${categoryIds.join(', ')}
 ${budgetContext}`,
       },
-      {
-        role: 'user',
-        content: userText,
-      },
+      { role: 'user', content: userText },
     ];
 
     try {
-      if (!this.isInitialized || !this.model) throw new Error('Model not initialized');
-
       const result = await this.model.complete({
         messages,
         tools,
         options: {
-          temperature: 0.3,
-          maxTokens: 256,
+          temperature: 0.0,    // Greedy — deterministic
+          topK: 1,             // Always pick most probable token
+          maxTokens: 128,      // Function calls are short
           forceTools: true,
         },
       });
 
-      const executedFunctions: FunctionCallResult[] = [];
-      let responseText = result.response || '';
-      let totalXP = 0;
-      let lessonResult: AIResult['lesson'] = null;
-      let contentType: ContentType | undefined;
+      if (!result.functionCalls?.length) return null;
+
       let pendingTransaction: PendingTransaction | null = null;
+      const executedFunctions: FunctionCallResult[] = [];
+      let totalXP = 0;
+      let responseText = '';
+      let contentType: ContentType | undefined;
+      let lessonResult: AIResult['lesson'] = null;
 
-      if (result.functionCalls && result.functionCalls.length > 0) {
-        for (const call of result.functionCalls) {
-          // Defer log_transaction for confirmation
-          if (call.name === 'log_transaction') {
-            const args = call.arguments as Record<string, unknown>;
-            const category = args.category as string;
-            const amount = args.amount as number;
-            const description = args.description as string || category;
+      for (const call of result.functionCalls) {
+        if (call.name === 'log_transaction') {
+          const args = call.arguments as Record<string, unknown>;
+          const category = args.category as string;
+          const amount = args.amount as number;
+          const description = (args.description as string) || category;
 
-            // Look up budget info for the confirmation sheet
-            const budgetCat = await getBudgetCategory(category);
-            const catName = budgetState.find(c => c.id === category)?.name || category;
+          const budgetCat = await getBudgetCategory(category);
+          const catName = budgetState.find((c) => c.id === category)?.name || category;
 
-            pendingTransaction = {
-              amount,
-              category,
-              categoryName: catName,
-              description,
-              budgetSpent: budgetCat?.spent ?? 0,
-              budgetLimit: budgetCat?.weekly_limit ?? 0,
-            };
-            continue;
-          }
-
-          // Execute non-transaction functions immediately
+          pendingTransaction = {
+            amount,
+            category,
+            categoryName: catName,
+            description,
+            budgetSpent: budgetCat?.spent ?? 0,
+            budgetLimit: budgetCat?.weekly_limit ?? 0,
+          };
+        } else {
           const fnResult = await executeFunctionCall({
             name: call.name,
             arguments: call.arguments as Record<string, unknown>,
           });
           executedFunctions.push(fnResult);
           totalXP += fnResult.xpEarned;
-
-          if (fnResult.lesson) {
-            lessonResult = fnResult.lesson;
-          }
-          if (fnResult.responseText) {
-            responseText = fnResult.responseText;
-          }
-          if (fnResult.contentType) {
-            contentType = fnResult.contentType;
-          }
+          if (fnResult.responseText) responseText = fnResult.responseText;
+          if (fnResult.contentType) contentType = fnResult.contentType;
+          if (fnResult.lesson) lessonResult = fnResult.lesson;
         }
-      } else {
-        return this.fallbackParse(userText);
+      }
+
+      if (pendingTransaction) {
+        conversationContext.startConfirmation(pendingTransaction);
+        contentType = 'confirmation';
       }
 
       if (!responseText && executedFunctions.length > 0) {
         responseText = this.buildResponseText(executedFunctions);
-      }
-
-      // If there's a pending transaction, start the confirmation flow
-      if (pendingTransaction) {
-        conversationContext.startConfirmation(pendingTransaction);
-        contentType = 'confirmation';
       }
 
       return {
@@ -232,8 +306,8 @@ ${budgetContext}`,
         pendingTransaction,
       };
     } catch (error) {
-      console.error('AI processing error:', error);
-      return this.fallbackParse(userText);
+      console.error('Gemma parsing error:', error);
+      return null; // Fall through to keyword spending parser
     }
   }
 
@@ -328,61 +402,12 @@ ${budgetContext}`,
     return '';
   }
 
-  private async fallbackParse(userText: string): Promise<AIResult> {
+  /**
+   * Last-resort spending parser — keyword matching for transaction detection.
+   * Called only after deterministic router AND Gemma both failed.
+   */
+  private async fallbackSpendingParse(userText: string): Promise<AIResult> {
     const lowerText = userText.toLowerCase();
-
-    // Fallback: check for adjust/increase/decrease + category first (before generic "budget")
-    const adjustKeywords = ['adjust', 'change limit', 'increase', 'decrease', 'raise', 'lower'];
-    if (adjustKeywords.some((kw) => lowerText.includes(kw))) {
-      const cats = await getBudgetCategories();
-      const matchedCat = cats.find((c) => lowerText.includes(c.name.toLowerCase()) || lowerText.includes(c.id.toLowerCase()));
-      if (matchedCat) {
-        const direction = lowerText.includes('increase') || lowerText.includes('raise') || lowerText.includes('more')
-          ? 'increase'
-          : lowerText.includes('decrease') || lowerText.includes('lower') || lowerText.includes('less') || lowerText.includes('reduce')
-            ? 'decrease'
-            : undefined;
-        const amountMatch = lowerText.match(/(?:by\s+)?(\d+(?:\.\d{1,2})?)/);
-        const args: Record<string, unknown> = { category: matchedCat.id };
-        if (direction) args.direction = direction;
-        if (amountMatch) args.amount = parseFloat(amountMatch[1]);
-
-        const fnResult = await executeFunctionCall({ name: 'adjust_budget_limit', arguments: args });
-        return {
-          responseText: fnResult.responseText || '',
-          executedFunctions: [fnResult],
-          lesson: null,
-          xpEarned: fnResult.xpEarned,
-          contentType: fnResult.contentType,
-        };
-      }
-    }
-
-    // Fallback function routing via keywords
-    // Order matters — more specific phrases must come before generic ones
-    const functionKeywords: Array<{ fn: string; args: Record<string, unknown>; keywords: string[] }> = [
-      { fn: 'get_help', args: {}, keywords: ['help', 'what can i do', 'what can i say'] },
-      { fn: 'open_settings', args: {}, keywords: ['settings', 'open settings', 'preferences', 'edit name', 'rename'] },
-      { fn: 'accept_challenge', args: {}, keywords: ['start a challenge', 'accept challenge', 'new quest', 'start quest', 'start challenge'] },
-      { fn: 'get_budget_overview', args: {}, keywords: ['budget', 'budgets', 'how much left', 'overview'] },
-      { fn: 'get_quest_log', args: {}, keywords: ['quest log', 'quests', 'quest progress', 'challenges', 'my challenges', 'show quests'] },
-      { fn: 'check_pet_status', args: {}, keywords: ['how is buddy', "how's buddy", 'pet status', 'how are you'] },
-      { fn: 'get_recent_transactions', args: {}, keywords: ['recent', 'last transactions', 'what did i spend', 'history'] },
-      { fn: 'get_mood_history', args: {}, keywords: ['mood history', 'mood', 'how has buddy been'] },
-    ];
-
-    for (const route of functionKeywords) {
-      if (route.keywords.some((kw) => lowerText.includes(kw))) {
-        const fnResult = await executeFunctionCall({ name: route.fn, arguments: route.args });
-        return {
-          responseText: fnResult.responseText || '',
-          executedFunctions: [fnResult],
-          lesson: null,
-          xpEarned: fnResult.xpEarned,
-          contentType: fnResult.contentType,
-        };
-      }
-    }
 
     // Build keyword map from DB categories + plan categories
     const categories = await getBudgetCategories();
