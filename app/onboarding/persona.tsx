@@ -7,6 +7,7 @@ import { router } from 'expo-router';
 import OnboardingProgress from '../../components/OnboardingProgress';
 import { useOnboarding } from '../../services/onboardingContext';
 import { useVoiceOnboarding } from '../../hooks/useVoiceOnboarding';
+import VoiceMicButton from '../../components/VoiceMicButton';
 import { Colors, Spacing, FontSize, BorderRadius } from '../../constants/theme';
 
 const PERSONAS = [
@@ -56,7 +57,7 @@ export default function PersonaScreen() {
     }, 1500);
   }, [handleSelect, updateData]);
 
-  useVoiceOnboarding({
+  const { isListening, transcript, startListening } = useVoiceOnboarding({
     instruction: "How should we talk about money? Say 'simple' for plain language, 'basics' for some explanation, or 'data' for full detail.",
     keywords: {
       'simple': () => handleVoiceSelect('beginner'),
@@ -103,6 +104,12 @@ export default function PersonaScreen() {
             </Pressable>
           ))}
         </View>
+
+        <VoiceMicButton
+          onPress={startListening}
+          isListening={isListening}
+          transcript={transcript}
+        />
 
         <Pressable style={styles.cta} onPress={handleContinue} accessibilityRole="button">
           <Text style={styles.ctaText}>Continue</Text>

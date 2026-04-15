@@ -7,6 +7,7 @@ import { router } from 'expo-router';
 import OnboardingProgress from '../../components/OnboardingProgress';
 import { useOnboarding } from '../../services/onboardingContext';
 import { useVoiceOnboarding } from '../../hooks/useVoiceOnboarding';
+import VoiceMicButton from '../../components/VoiceMicButton';
 import { useTheme } from '../../theme';
 import { scorePlans, getTopPlans, type FinancialPlan } from '../../data/plans';
 
@@ -75,7 +76,7 @@ export default function PlanScreen() {
     return kw;
   }, [topPlans, handleVoiceSelectPlan]);
 
-  useVoiceOnboarding({
+  const { isListening, transcript, startListening } = useVoiceOnboarding({
     instruction: `Choose a plan. Say 'first' for ${topPlans[0]?.title}, or 'second' for ${topPlans[1]?.title}.`,
     keywords: voiceKeywords,
     enabled: true,
@@ -261,6 +262,12 @@ export default function PlanScreen() {
             );
           })}
         </ScrollView>
+
+        <VoiceMicButton
+          onPress={startListening}
+          isListening={isListening}
+          transcript={transcript}
+        />
 
         <Pressable
           style={({ pressed }) => [

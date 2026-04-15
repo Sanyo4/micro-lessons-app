@@ -7,6 +7,7 @@ import { router } from 'expo-router';
 import OnboardingProgress from '../../components/OnboardingProgress';
 import { useOnboarding } from '../../services/onboardingContext';
 import { useVoiceOnboarding } from '../../hooks/useVoiceOnboarding';
+import VoiceMicButton from '../../components/VoiceMicButton';
 import { useTheme } from '../../theme';
 
 interface AccessibilityPref {
@@ -79,7 +80,7 @@ export default function AccessibilityScreen() {
     router.push('/onboarding/pin-setup');
   }, []);
 
-  useVoiceOnboarding({
+  const { isListening, transcript, startListening } = useVoiceOnboarding({
     instruction: "Accessibility settings. Say 'high contrast', 'larger text', 'simple language', or 'reduce motion' to toggle. Say 'continue' when done.",
     keywords: {
       'high contrast': () => togglePref('highContrast'),
@@ -245,6 +246,12 @@ export default function AccessibilityScreen() {
         </View>
 
         <View style={styles.spacer} />
+
+        <VoiceMicButton
+          onPress={startListening}
+          isListening={isListening}
+          transcript={transcript}
+        />
 
         <Pressable
           style={({ pressed }) => [

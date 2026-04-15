@@ -7,6 +7,7 @@ import { useOnboarding } from '../../services/onboardingContext';
 import { getPetArt } from '../../assets/pet';
 import SpeechBubble from '../../components/pet/SpeechBubble';
 import { useVoiceOnboarding } from '../../hooks/useVoiceOnboarding';
+import VoiceMicButton from '../../components/VoiceMicButton';
 
 interface Question {
   text: string;
@@ -68,7 +69,7 @@ export default function QuestionsScreen() {
     [currentIndex, currentQuestion, selectedTags, updateData],
   );
 
-  const { isListening, transcript } = useVoiceOnboarding({
+  const { isListening, transcript, startListening } = useVoiceOnboarding({
     instruction: voiceInstruction,
     keywords: {
       'yes': () => handleAnswer('yes'),
@@ -181,21 +182,15 @@ export default function QuestionsScreen() {
               </Text>
             </View>
 
-            {/* Voice listening indicator */}
-            {isListening && (
-              <Text
-                style={{
-                  color: theme.colors.petStates.thriving.light,
-                  fontFamily: monoFont,
-                  fontSize: theme.typeScale.terminalSmall,
-                  textAlign: 'center',
-                  marginTop: theme.spacing.sm,
-                  opacity: 0.9,
-                }}
-              >
-                {transcript ? `> heard: "${transcript}"` : '> listening...'}
-              </Text>
-            )}
+            {/* Voice mic button */}
+            <View style={{ alignItems: 'center', marginTop: theme.spacing.md }}>
+              <VoiceMicButton
+                onPress={startListening}
+                isListening={isListening}
+                transcript={transcript}
+                disabled={isFinished}
+              />
+            </View>
 
             {/* Y / N buttons */}
             <View style={[styles.buttonRow, { marginTop: theme.spacing.xl }]}>

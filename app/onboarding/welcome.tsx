@@ -16,6 +16,7 @@ import { useOnboarding } from '../../services/onboardingContext';
 import { getPetArt } from '../../assets/pet';
 import SpeechBubble from '../../components/pet/SpeechBubble';
 import { useVoiceOnboarding } from '../../hooks/useVoiceOnboarding';
+import VoiceMicButton from '../../components/VoiceMicButton';
 
 export default function WelcomeScreen() {
   const theme = useTheme();
@@ -34,7 +35,7 @@ export default function WelcomeScreen() {
     router.push('/onboarding/questions');
   }, [petName, updateData]);
 
-  const { isListening, transcript } = useVoiceOnboarding({
+  const { isListening, transcript, startListening } = useVoiceOnboarding({
     instruction: "Something's hatching! Give it a name. Shake your phone and say a name.",
     keywords: {
       '*': (text?: string) => {
@@ -158,21 +159,14 @@ export default function WelcomeScreen() {
             </View>
           </View>
 
-          {/* Voice listening indicator */}
-          {isListening && (
-            <Text
-              style={{
-                color: theme.colors.petStates.thriving.light,
-                fontFamily: monoFont,
-                fontSize: theme.typeScale.terminalSmall,
-                textAlign: 'center',
-                marginTop: theme.spacing.sm,
-                opacity: 0.9,
-              }}
-            >
-              {transcript ? `> heard: "${transcript}"` : '> listening...'}
-            </Text>
-          )}
+          {/* Voice mic button */}
+          <View style={{ alignItems: 'center', marginTop: theme.spacing.md }}>
+            <VoiceMicButton
+              onPress={startListening}
+              isListening={isListening}
+              transcript={transcript}
+            />
+          </View>
 
           {/* Continue button */}
           <Pressable
