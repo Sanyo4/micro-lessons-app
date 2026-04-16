@@ -89,6 +89,20 @@ async function initializeDatabase(database: SQLite.SQLiteDatabase): Promise<void
     await database.execAsync('ALTER TABLE user_profile ADD COLUMN flexible_budget REAL DEFAULT 0');
   } catch (_) { /* column already exists */ }
 
+  // Migrate pet_profile: add health_points
+  try {
+    await database.execAsync('ALTER TABLE pet_profile ADD COLUMN health_points INTEGER DEFAULT 100');
+  } catch (_) { /* column already exists */ }
+
+  // Completed coaching games tracking
+  await database.execAsync(`
+    CREATE TABLE IF NOT EXISTS completed_games (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      game_key TEXT NOT NULL UNIQUE,
+      completed_at TEXT NOT NULL
+    );
+  `);
+
   // === Pet & Accessibility tables (Brief 03) ===
   await database.execAsync(`
     CREATE TABLE IF NOT EXISTS pet_profile (
@@ -710,4 +724,40 @@ export async function upsertAccessibilityPrefs(partial: Record<string, unknown>)
       values
     );
   }
+}
+
+// ========== Pet Health ==========
+
+export async function updatePetHealth(delta: number): Promise<number> {
+  const database = await getDatabase();
+  const pet = await getPetProfile();
+  const current = (pet as PetProfile & { health_points?: number })?.health_points ?? 100;
+  const newHealth = Math.max(0, Math.min(100, current + delta));
+  await database.runAsync('UPDATE pet_profile SET health_points = ? WHERE id = 1', [newHealth]);
+  return newHealth;
+}
+
+export async function getPetHealth(): Promise<number> {
+  const database = await getDatabase();
+  const result = await database.getFirstAsync<{ health_points: number }>('SELECT health_points FROM pet_profile WHERE id = 1');
+  return result?.health_points ?? 100;
+}
+
+// ========== Completed Games ==========
+
+export async function markGameCompleted(gameKey: string): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync(
+    'INSERT OR IGNORE INTO completed_games (game_key, completed_at) VALUES (?, ?)',
+    [gameKey, new Date().toISOString()]
+  );
+}
+
+export async function isGameCompleted(gameKey: string): Promise<boolean> {
+  const database = await getDatabase();
+  const result = await database.getFirstAsync<{ count: number }>(
+    'SELECT COUNT(*) as count FROM completed_games WHERE game_key = ?',
+    [gameKey]
+  );
+  return (result?.count ?? 0) > 0;
 }

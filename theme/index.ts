@@ -123,6 +123,15 @@ export function ThemeProvider({ children, onReady }: ThemeProviderProps) {
     }
   }, []);
 
+  // Sync accessibility settings to non-React service modules
+  useEffect(() => {
+    import('../services/haptics').then(m => m.setHapticIntensity(accessibilitySettings.hapticIntensity));
+    import('../services/tonalAudio').then(m => {
+      m.setBloopSound(accessibilitySettings.bloopSound);
+      m.setTonalVolume(accessibilitySettings.tonalVolume);
+    });
+  }, [accessibilitySettings.hapticIntensity, accessibilitySettings.bloopSound, accessibilitySettings.tonalVolume]);
+
   const resolvedColors = useMemo(
     () => getResolvedColors(accessibilitySettings.highContrast),
     [accessibilitySettings.highContrast],

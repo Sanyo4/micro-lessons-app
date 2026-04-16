@@ -1,6 +1,6 @@
 // Reusable voice onboarding hook — shake to talk + keyword matching.
 // Each screen passes an instruction (TTS) and keyword→handler map.
-// User hears instruction → shakes to talk → says keyword → handler fires.
+// User hears instruction → auto-mic activates → says keyword → handler fires.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Platform } from 'react-native';
@@ -10,6 +10,11 @@ import {
   useSpeechRecognitionEvent,
 } from 'expo-speech-recognition';
 import { useShakeDetector } from './useShakeDetector';
+import {
+  playMicActivateHaptic,
+  playMicDeactivateHaptic,
+  playShakeDetectedHaptic,
+} from '../services/haptics';
 
 interface VoiceOnboardingOptions {
   // TTS instruction spoken on mount
@@ -30,6 +35,8 @@ interface VoiceOnboardingState {
   repeatInstruction: () => void;
   // Call to manually start listening (without shake)
   startListening: () => void;
+  // Speak feedback text then auto-activate mic when done
+  speakWithAutoMic: (text: string, rate?: number) => void;
 }
 
 export function useVoiceOnboarding({
@@ -42,6 +49,7 @@ export function useVoiceOnboarding({
   const [transcript, setTranscript] = useState('');
   const keywordsRef = useRef(keywords);
   const instructionRef = useRef(instruction);
+  const hadFinalResultRef = useRef(false);
 
   // Keep refs fresh
   useEffect(() => {
@@ -51,29 +59,13 @@ export function useVoiceOnboarding({
     instructionRef.current = instruction;
   }, [instruction]);
 
-  // Speak instruction on mount
-  useEffect(() => {
-    if (!enabled) return;
-    const timer = setTimeout(() => {
-      Speech.speak(instruction, { language: 'en-US', rate: 0.9 });
-    }, speakDelay);
-    return () => {
-      clearTimeout(timer);
-      Speech.stop();
-    };
-  }, [instruction, speakDelay, enabled]);
-
-  const repeatInstruction = useCallback(() => {
-    Speech.stop();
-    Speech.speak(instructionRef.current, { language: 'en-US', rate: 0.9 });
-  }, []);
-
   const startListening = useCallback(async () => {
     if (!enabled || Platform.OS === 'web') return;
     Speech.stop();
     const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
     if (!result.granted) return;
     setTranscript('');
+    playMicActivateHaptic();
     ExpoSpeechRecognitionModule.start({
       lang: 'en-US',
       interimResults: true,
@@ -81,21 +73,68 @@ export function useVoiceOnboarding({
     });
   }, [enabled]);
 
+  // Speak instruction on mount, auto-mic when done
+  useEffect(() => {
+    if (!enabled) return;
+    const timer = setTimeout(() => {
+      Speech.speak(instruction, {
+        language: 'en-US',
+        rate: 0.9,
+        onDone: () => { startListening(); },
+        onStopped: () => { /* user interrupted — no auto-mic */ },
+      });
+    }, speakDelay);
+    return () => {
+      clearTimeout(timer);
+      Speech.stop();
+    };
+  }, [instruction, speakDelay, enabled, startListening]);
+
+  const repeatInstruction = useCallback(() => {
+    Speech.stop();
+    Speech.speak(instructionRef.current, {
+      language: 'en-US',
+      rate: 0.9,
+      onDone: () => { startListening(); },
+      onStopped: () => {},
+    });
+  }, [startListening]);
+
+  const speakWithAutoMic = useCallback((text: string, rate = 0.95) => {
+    Speech.stop();
+    Speech.speak(text, {
+      language: 'en-US',
+      rate,
+      onDone: () => { startListening(); },
+      onStopped: () => {},
+    });
+  }, [startListening]);
+
   // Shake to start listening
   useShakeDetector({
-    onShake: startListening,
+    onShake: () => {
+      playShakeDetectedHaptic();
+      startListening();
+    },
     enabled: enabled && !isListening,
   });
 
   // Speech recognition events
-  useSpeechRecognitionEvent('start', () => setIsListening(true));
-  useSpeechRecognitionEvent('end', () => setIsListening(false));
+  useSpeechRecognitionEvent('start', () => {
+    hadFinalResultRef.current = false;
+    setIsListening(true);
+  });
+  useSpeechRecognitionEvent('end', () => {
+    setIsListening(false);
+    if (hadFinalResultRef.current) playMicDeactivateHaptic();
+  });
   useSpeechRecognitionEvent('error', () => setIsListening(false));
   useSpeechRecognitionEvent('result', (event) => {
     const text = event.results[0]?.transcript ?? '';
     setTranscript(text);
 
     if (event.isFinal && text.trim()) {
+      hadFinalResultRef.current = true;
       const lower = text.toLowerCase().trim();
       setTranscript('');
 
@@ -116,5 +155,5 @@ export function useVoiceOnboarding({
     }
   });
 
-  return { isListening, transcript, repeatInstruction, startListening };
+  return { isListening, transcript, repeatInstruction, startListening, speakWithAutoMic };
 }

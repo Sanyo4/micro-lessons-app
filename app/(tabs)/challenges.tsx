@@ -8,21 +8,25 @@ import {
   getCompletedChallenges,
   createChallenge,
   updateUserXP,
+  getUserProfile,
   type Challenge,
+  type UserProfile,
 } from '../../services/database';
-import { XP_AWARDS } from '../../utils/gamification';
+import { XP_AWARDS, calculateLevel, getLevelTitle, getXPForNextLevel } from '../../utils/gamification';
 import { useTheme } from '../../theme';
 
 export default function ChallengesScreen() {
   const theme = useTheme();
   const [active, setActive] = useState<Challenge[]>([]);
   const [completed, setCompleted] = useState<Challenge[]>([]);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isAccepting, setIsAccepting] = useState(false);
 
   const load = useCallback(async () => {
-    const [a, c] = await Promise.all([getActiveChallenges(), getCompletedChallenges()]);
+    const [a, c, p] = await Promise.all([getActiveChallenges(), getCompletedChallenges(), getUserProfile()]);
     setActive(a);
     setCompleted(c);
+    setProfile(p);
   }, []);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -46,6 +50,7 @@ export default function ChallengesScreen() {
   };
 
   const mono = theme.fontsLoaded ? theme.fonts.monospace : theme.fonts.monospaceFallback;
+  const fs = theme.fontScale;
 
   const progressBar = (progress: number, total: number) => {
     const filled = Math.min(Math.round((progress / total) * 8), 8);
@@ -53,44 +58,106 @@ export default function ChallengesScreen() {
     return '[' + '#'.repeat(filled) + '.'.repeat(empty) + ']';
   };
 
+  const getDaysLeft = (ch: Challenge) => {
+    const deadline = new Date(new Date(ch.created_at).getTime() + ch.duration_days * 86400000);
+    return Math.max(0, Math.ceil((deadline.getTime() - Date.now()) / 86400000));
+  };
+
+  // XP summary data
+  const level = profile ? calculateLevel(profile.xp) : 1;
+  const levelTitle = getLevelTitle(level);
+  const xpProgress = profile ? getXPForNextLevel(profile.xp) : { current: 0, needed: 100, progress: 0 };
+  const xpBarFilled = Math.min(Math.round(xpProgress.progress * 10), 10);
+  const xpBarEmpty = 10 - xpBarFilled;
+
+  const hasNoQuests = active.length === 0 && completed.length === 0;
+
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.colors.base.background }]} edges={['top']}>
       <ScrollView contentContainerStyle={[styles.content, { padding: theme.spacing.lg }]}>
         <View style={[styles.terminal, { backgroundColor: theme.colors.base.terminal, borderRadius: theme.radius.terminal }]}>
-          <Text style={[styles.termHeader, { color: theme.colors.base.terminalText, fontFamily: mono }]}>
+          <Text style={[styles.termHeader, { color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 18 * fs }]}>
             {'── Quest Log ──'}
           </Text>
 
+          {/* XP/Level summary */}
+          {profile && (
+            <>
+              <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14 * fs, lineHeight: 22 * fs }}>
+                {`Level ${level}: ${levelTitle}`}
+              </Text>
+              <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14 * fs, lineHeight: 22 * fs, opacity: 0.7 }}>
+                {`XP ${'[' + '#'.repeat(xpBarFilled) + '.'.repeat(xpBarEmpty) + ']'} ${xpProgress.current}/${xpProgress.needed}`}
+              </Text>
+              {completed.length > 0 && (
+                <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14 * fs, lineHeight: 22 * fs, opacity: 0.5 }}>
+                  {`Quests done: ${completed.length}`}
+                </Text>
+              )}
+              <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14 * fs, opacity: 0.3, marginTop: 4, marginBottom: 8 }}>
+                {'────────────────────────────'}
+              </Text>
+            </>
+          )}
+
           {/* Active */}
           {active.length > 0 ? (
-            active.map((ch) => (
-              <View key={ch.id} style={styles.questBlock}>
-                <Text style={[styles.termLabel, { color: theme.colors.base.terminalText, fontFamily: mono }]}>
-                  {'* ACTIVE'}
-                </Text>
-                <Text style={[styles.termText, { color: theme.colors.base.terminalText, fontFamily: mono }]}>
-                  {`"${ch.title}"`}
-                </Text>
-                <Text
-                  style={[styles.termText, { color: theme.colors.base.terminalText, fontFamily: mono }]}
-                  accessibilityLabel={`Progress: ${ch.progress} of ${ch.duration_days} days`}
-                >
-                  {`Progress: ${progressBar(ch.progress, ch.duration_days)} ${ch.progress}/${ch.duration_days} days`}
-                </Text>
-                <Text style={[styles.termText, { color: theme.colors.base.terminalText, fontFamily: mono, opacity: 0.7 }]}>
-                  {`Reward: +${ch.xp_reward} care points`}
-                </Text>
-              </View>
-            ))
-          ) : (
-            <View style={styles.questBlock}>
-              <Text style={[styles.termLabel, { color: theme.colors.base.terminalText, fontFamily: mono }]}>
-                {'○ AVAILABLE'}
+            active.map((ch) => {
+              const daysLeft = getDaysLeft(ch);
+              return (
+                <View key={ch.id} style={styles.questBlock}>
+                  <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14 * fs, lineHeight: 22 * fs, fontWeight: '700', marginTop: 8 }}>
+                    {'* ACTIVE'}
+                  </Text>
+                  <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14 * fs, lineHeight: 22 * fs }}>
+                    {`"${ch.title}"`}
+                  </Text>
+                  <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14 * fs, lineHeight: 22 * fs, opacity: 0.6 }}>
+                    {ch.description}
+                  </Text>
+                  <Text
+                    style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14 * fs, lineHeight: 22 * fs }}
+                    accessibilityLabel={`Progress: ${ch.progress} of ${ch.duration_days} days`}
+                  >
+                    {`Progress: ${progressBar(ch.progress, ch.duration_days)} ${ch.progress}/${ch.duration_days} days`}
+                  </Text>
+                  <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14 * fs, lineHeight: 22 * fs, opacity: 0.7 }}>
+                    {`Time left: ${daysLeft}d | Reward: +${ch.xp_reward} care points`}
+                  </Text>
+                  <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14 * fs, lineHeight: 22 * fs, opacity: 0.5, marginTop: 4 }}>
+                    {ch.type === 'track_purchases'
+                      ? '> hint: log spending on the home screen'
+                      : `> hint: log ${ch.category} spending to progress`}
+                  </Text>
+                </View>
+              );
+            })
+          ) : hasNoQuests ? (
+            /* True empty state — no quests at all */
+            <View style={styles.emptyState}>
+              <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14 * fs, lineHeight: 22 * fs, textAlign: 'center' }}>
+                {'No quests yet!'}
               </Text>
-              <Text style={[styles.termText, { color: theme.colors.base.terminalText, fontFamily: mono }]}>
+              <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14 * fs, lineHeight: 22 * fs, textAlign: 'center', opacity: 0.7, marginTop: 12 }}>
+                {'Complete lessons and log\nspending to unlock quests.'}
+              </Text>
+              <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14 * fs, lineHeight: 22 * fs, textAlign: 'center', opacity: 0.5, marginTop: 12 }}>
+                {'Your pet will suggest new\nchallenges as you progress.'}
+              </Text>
+            </View>
+          ) : (
+            /* Has completed quests but none active — offer starter */
+            <View style={styles.questBlock}>
+              <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14 * fs, lineHeight: 22 * fs, fontWeight: '700', marginTop: 8 }}>
+                {'\u25CB AVAILABLE'}
+              </Text>
+              <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14 * fs, lineHeight: 22 * fs }}>
                 {'"Track every purchase"'}
               </Text>
-              <Text style={[styles.termText, { color: theme.colors.base.terminalText, fontFamily: mono, opacity: 0.7 }]}>
+              <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14 * fs, lineHeight: 22 * fs, opacity: 0.6 }}>
+                {'Log each purchase for 3 days'}
+              </Text>
+              <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14 * fs, lineHeight: 22 * fs, opacity: 0.7 }}>
                 {'Reward: +30 care points'}
               </Text>
             </View>
@@ -99,13 +166,13 @@ export default function ChallengesScreen() {
           {/* Completed */}
           {completed.map((ch) => (
             <View key={ch.id} style={styles.questBlock}>
-              <Text style={[styles.termLabel, { color: theme.colors.base.terminalText, fontFamily: mono, opacity: 0.6 }]}>
+              <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14 * fs, lineHeight: 22 * fs, fontWeight: '700', opacity: 0.6, marginTop: 8 }}>
                 {'[ok] COMPLETED'}
               </Text>
-              <Text style={[styles.termText, { color: theme.colors.base.terminalText, fontFamily: mono, opacity: 0.6 }]}>
+              <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14 * fs, lineHeight: 22 * fs, opacity: 0.6 }}>
                 {`"${ch.title}"`}
               </Text>
-              <Text style={[styles.termText, { color: theme.colors.base.terminalText, fontFamily: mono, opacity: 0.5 }]}>
+              <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14 * fs, lineHeight: 22 * fs, opacity: 0.5 }}>
                 {`+${ch.xp_reward} care points earned`}
               </Text>
             </View>
@@ -128,7 +195,7 @@ export default function ChallengesScreen() {
               },
             ]}
           >
-            <Text style={[styles.acceptBtnText, { color: theme.colors.interactive.primaryText }]}>
+            <Text style={[styles.acceptBtnText, { color: theme.colors.interactive.primaryText, fontSize: 16 * fs }]}>
               {isAccepting ? 'Accepting...' : 'Accept Challenge'}
             </Text>
           </Pressable>
@@ -142,10 +209,9 @@ const styles = StyleSheet.create({
   safe: { flex: 1 },
   content: { flexGrow: 1, gap: 16 },
   terminal: { padding: 16 },
-  termHeader: { fontSize: 18, textAlign: 'center', marginBottom: 12 },
-  termLabel: { fontSize: 14, marginTop: 8, fontWeight: '700' },
-  termText: { fontSize: 14, lineHeight: 22 },
+  termHeader: { textAlign: 'center', marginBottom: 12 },
   questBlock: { marginBottom: 12 },
+  emptyState: { paddingVertical: 24 },
   acceptBtn: { paddingVertical: 14, alignItems: 'center', minHeight: 48 },
-  acceptBtnText: { fontSize: 16, fontWeight: '700' },
+  acceptBtnText: { fontWeight: '700' },
 });

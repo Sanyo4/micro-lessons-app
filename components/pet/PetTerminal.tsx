@@ -4,12 +4,15 @@ import { View, Text, StyleSheet } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { useTheme, type PetMood } from '../../theme';
 import { getPetArt } from '../../assets/pet';
+import HealthMeter from './HealthMeter';
 
 interface PetTerminalProps {
   petState: PetMood;
   petName: string;
   /** Compact mode for non-home screens (smaller font, fewer lines) */
   compact?: boolean;
+  /** Pet health points (0-100) for the health meter */
+  healthPoints?: number;
 }
 
 /** Accessibility labels per state (Brief 02) */
@@ -21,7 +24,7 @@ const STATE_DESCRIPTIONS: Record<PetMood, (name: string) => string> = {
   critical: (n) => `${n} is not doing well. They look distressed and need your attention.`,
 };
 
-export default function PetTerminal({ petState, petName, compact = false }: PetTerminalProps) {
+export default function PetTerminal({ petState, petName, compact = false, healthPoints }: PetTerminalProps) {
   const theme = useTheme();
   const stateColor = theme.colors.petStates[petState];
   const artLines = useMemo(() => {
@@ -103,6 +106,10 @@ export default function PetTerminal({ petState, petName, compact = false }: PetT
               </Text>
             ))}
           </Animated.View>
+        )}
+
+        {healthPoints != null && (
+          <HealthMeter health={healthPoints} />
         )}
 
         {!compact && (

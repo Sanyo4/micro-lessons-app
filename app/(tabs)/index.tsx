@@ -1,5 +1,5 @@
 // Voice-first single-page layout — all interactions through pet terminal
-import { useState, useCallback, useReducer, useEffect } from 'react';
+import { useState, useCallback, useReducer, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -42,6 +42,7 @@ import { checkEvolution } from '../../services/petEvolution';
 import { getTransactionReaction, getDailyCheckInReaction } from '../../services/petReactions';
 import { resolveDialogue } from '../../services/petDialogue';
 import { playFullPetFeedback } from '../../services/audioFeedback';
+import { playShakeDetectedHaptic } from '../../services/haptics';
 import { XP_AWARDS } from '../../utils/gamification';
 import { announceForScreenReader } from '../../utils/accessibility';
 import { getSuggestionChips, type ChipState } from '../../utils/suggestionChips';
@@ -85,9 +86,16 @@ export default function HomeScreen() {
   // Shake-to-talk
   const [shakeTrigger, setShakeTrigger] = useState(0);
   useShakeDetector({
-    onShake: () => setShakeTrigger((n) => n + 1),
+    onShake: () => {
+      playShakeDetectedHaptic();
+      setShakeTrigger((n) => n + 1);
+    },
     enabled: !isProcessing,
   });
+
+  // Conversational auto-mic after TTS
+  const [ttsTrigger, setTTSTrigger] = useState(0);
+  const voiceInteractionActive = useRef(false);
 
   // Lesson modal (kept as modal for now)
   const [showLesson, setShowLesson] = useState(false);
@@ -283,6 +291,17 @@ export default function HomeScreen() {
     }
   };
 
+  const handleVoiceSend = async (text: string) => {
+    voiceInteractionActive.current = true;
+    await handleSend(text);
+  };
+
+  const handleTTSDone = useCallback(() => {
+    if (voiceInteractionActive.current && !isProcessing) {
+      setTTSTrigger((n) => n + 1);
+    }
+  }, [isProcessing]);
+
   const executeTransaction = async (pending: PendingTransaction) => {
     try {
       const result = await aiService.executeConfirmedTransaction(pending);
@@ -402,7 +421,7 @@ export default function HomeScreen() {
           {/* Speech Bubble */}
           {dialogue ? (
             <Animated.View entering={FadeInDown.delay(200).duration(400)}>
-              <SpeechBubble message={dialogue} />
+              <SpeechBubble message={dialogue} onTTSDone={handleTTSDone} />
             </Animated.View>
           ) : null}
 
@@ -422,7 +441,13 @@ export default function HomeScreen() {
         </ScrollView>
 
         {/* Fixed Footer — Voice/Text Control */}
-        <VoiceControl onSend={handleSend} isProcessing={isProcessing} shakeTrigger={shakeTrigger} />
+        <VoiceControl
+          onSend={handleVoiceSend}
+          isProcessing={isProcessing}
+          shakeTrigger={shakeTrigger}
+          ttsTrigger={ttsTrigger}
+          onModeChange={(m) => { if (m === 'text') voiceInteractionActive.current = false; }}
+        />
 
         {/* XP Popup */}
         <XPPopup amount={xpPopup.amount} visible={xpPopup.visible} />

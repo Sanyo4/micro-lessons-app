@@ -9,7 +9,7 @@ export async function writeOnboardingData(data: OnboardingData): Promise<void> {
   // 1. Insert user profile (use petName as fallback if userName not set)
   const displayName = data.userName || data.petName || 'Buddy';
   await database.runAsync(
-    'INSERT INTO user_profile (name, xp, level, streak_days, monthly_income, flexible_budget) VALUES (?, 0, 1, 0, ?, ?)',
+    'INSERT OR REPLACE INTO user_profile (id, name, xp, level, streak_days, monthly_income, flexible_budget) VALUES (1, ?, 0, 1, 0, ?, ?)',
     [displayName, data.monthlyIncome || 0, data.flexibleSpending || 0]
   );
 
@@ -18,7 +18,7 @@ export async function writeOnboardingData(data: OnboardingData): Promise<void> {
   for (const cat of plan.categories) {
     const weeklyLimit = Math.max(1, Math.round((weeklyFlexible * cat.weeklyLimitPercent) / 100 * 100) / 100);
     await database.runAsync(
-      'INSERT INTO budget_categories (id, name, weekly_limit, spent, icon, color) VALUES (?, ?, ?, 0, ?, ?)',
+      'INSERT OR REPLACE INTO budget_categories (id, name, weekly_limit, spent, icon, color) VALUES (?, ?, ?, 0, ?, ?)',
       [cat.id, cat.name, weeklyLimit, cat.icon, cat.color]
     );
   }

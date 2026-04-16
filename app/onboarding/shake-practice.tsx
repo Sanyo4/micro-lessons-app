@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import * as Speech from 'expo-speech';
+import { playShakeDetectedHaptic } from '../../services/haptics';
 import Animated, { FadeInDown, useSharedValue, useAnimatedStyle, withRepeat, withTiming, Easing } from 'react-native-reanimated';
 import OnboardingProgress from '../../components/OnboardingProgress';
 import { useShakeDetector } from '../../hooks/useShakeDetector';
@@ -37,8 +38,7 @@ export default function ShakePracticeScreen() {
   useShakeDetector({
     onShake: () => {
       if (shaken) return;
-      // Immediate haptic so user knows the shake registered
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      playShakeDetectedHaptic();
       setShakeCount((n) => n + 1);
     },
     enabled: !shaken,
@@ -48,7 +48,7 @@ export default function ShakePracticeScreen() {
 
   const handleActivate = () => {
     if (shaken) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    playShakeDetectedHaptic();
     setShakeCount((n) => n + 1);
   };
 

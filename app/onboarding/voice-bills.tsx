@@ -26,9 +26,18 @@ export default function VoiceBillsScreen() {
   const { data, updateData } = useOnboarding();
   const [bills, setBills] = useState<{ name: string; amount: number }[]>(data.fixedExpenses);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [micTrigger, setMicTrigger] = useState(0);
+
+  const speakAndAutoMic = (text: string, rate = 0.95) => {
+    Speech.speak(text, {
+      rate,
+      onDone: () => setMicTrigger((n) => n + 1),
+      onStopped: () => {},
+    });
+  };
 
   useEffect(() => {
-    Speech.speak("What are your regular bills? Say a bill name and amount, then say done when finished.", { rate: 0.85 });
+    speakAndAutoMic("What are your regular bills? Say a bill name and amount, then say done when finished.", 0.85);
   }, []);
 
   const handleTranscript = async (text: string) => {
@@ -44,10 +53,10 @@ export default function VoiceBillsScreen() {
     if (bill) {
       setBills((prev) => [...prev, bill]);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Speech.speak(`Added ${bill.name}, £${Math.round(bill.amount)}. Next bill, or say done.`, { rate: 0.95 });
+      speakAndAutoMic(`Added ${bill.name}, £${Math.round(bill.amount)}. Next bill, or say done.`);
     } else {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Speech.speak("Say a bill name and amount, like rent 900.", { rate: 0.95 });
+      speakAndAutoMic("Say a bill name and amount, like rent 900.");
     }
     setIsProcessing(false);
   };
@@ -82,7 +91,7 @@ export default function VoiceBillsScreen() {
           </ScrollView>
         )}
 
-        <VoiceInput onTranscript={handleTranscript} isProcessing={isProcessing} />
+        <VoiceInput onTranscript={handleTranscript} isProcessing={isProcessing} autoStartTrigger={micTrigger} />
 
         <Pressable
           style={styles.altButton}

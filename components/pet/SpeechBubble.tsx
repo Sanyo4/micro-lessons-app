@@ -1,5 +1,5 @@
 // Brief 02 — Animal Crossing-style speech bubble with typewriter animation
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import * as Speech from 'expo-speech';
 import { useTheme, getTypewriterSpeed } from '../../theme';
@@ -7,14 +7,18 @@ import { useTheme, getTypewriterSpeed } from '../../theme';
 interface SpeechBubbleProps {
   message: string;
   onAnimationComplete?: () => void;
+  onTTSDone?: () => void;
 }
 
-export default function SpeechBubble({ message, onAnimationComplete }: SpeechBubbleProps) {
+export default function SpeechBubble({ message, onAnimationComplete, onTTSDone }: SpeechBubbleProps) {
   const theme = useTheme();
   const [displayedText, setDisplayedText] = useState('');
   const [isAnimating, setIsAnimating] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const indexRef = useRef(0);
+  const onTTSDoneRef = useRef(onTTSDone);
+
+  useEffect(() => { onTTSDoneRef.current = onTTSDone; }, [onTTSDone]);
 
   const reducedMotion = theme.accessibility.reducedMotion;
   const speed = getTypewriterSpeed(theme.accessibility.ttsSpeed);
@@ -66,6 +70,8 @@ export default function SpeechBubble({ message, onAnimationComplete }: SpeechBub
       Speech.speak(text, {
         language: 'en-US',
         rate: rateMap[theme.accessibility.ttsSpeed],
+        onDone: () => onTTSDoneRef.current?.(),
+        onStopped: () => { /* user interrupted — no auto-mic */ },
       });
     } catch {
       // TTS may not be available on all platforms

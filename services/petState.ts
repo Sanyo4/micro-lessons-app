@@ -1,4 +1,4 @@
-// Brief 03 — Pet state derivation engine
+// Brief 03 — Pet state derivation engine + health meter
 import {
   getPetProfile,
   updatePetProfile,
@@ -6,9 +6,11 @@ import {
   getPetStateHistory as dbGetStateHistory,
   getBudgetCategories,
   getRecentTransactions,
+  updatePetHealth,
+  getPetHealth,
   type PetStateHistory,
 } from './database';
-import { calculateEngagementBonus } from './engagement';
+import { calculateCarePoints } from './engagement';
 
 export type PetMood = 'thriving' | 'happy' | 'neutral' | 'worried' | 'critical';
 
@@ -17,13 +19,12 @@ const MOOD_ORDER: PetMood[] = ['critical', 'worried', 'neutral', 'happy', 'thriv
 
 /**
  * Calculate budget health as a 0–100 score.
- * Extends the existing budgetState.ts concept with a continuous number.
  */
 export async function calculateBudgetHealthScore(): Promise<number> {
   const categories = await getBudgetCategories();
-  if (categories.length === 0) return 50; // no budget set up yet
+  if (categories.length === 0) return 50;
 
-  let score = 50; // start at neutral baseline
+  let score = 50;
 
   for (const cat of categories) {
     const limit = cat.weekly_limit;
@@ -32,24 +33,19 @@ export async function calculateBudgetHealthScore(): Promise<number> {
     const percentage = (cat.spent / limit) * 100;
 
     if (percentage <= 40) {
-      // Well under budget — reward
       score += 10;
     } else if (percentage <= 60) {
-      // Moderate — slight reward
       score += 5;
     } else if (percentage <= 80) {
-      // Getting close — no change
+      // no change
     } else if (percentage <= 100) {
-      // Near limit — small penalty
       score -= 5;
     } else {
-      // Over budget — significant penalty, weighted by severity
       const overBy = percentage - 100;
       score -= Math.min(20, 5 + Math.floor(overBy / 10) * 3);
     }
   }
 
-  // Bonus: consistent logging (transaction today)
   const recentTransactions = await getRecentTransactions(20);
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
@@ -62,9 +58,50 @@ export async function calculateBudgetHealthScore(): Promise<number> {
 }
 
 /**
- * Pure function: derive pet mood from combined score.
- * Override: 3+ days since last log → critical regardless.
+ * Calculate health meter delta based on trigger and current state.
+ * Decay: inactivity and over-budget categories reduce health.
+ * Recovery: transactions, quests, and good budgeting increase health.
  */
+export async function calculateHealthDelta(trigger: string): Promise<number> {
+  const daysSince = await getDaysSinceLastLog();
+  const categories = await getBudgetCategories();
+
+  let delta = 0;
+
+  if (trigger === 'app_open' || trigger === 'daily_check') {
+    // Decay from inactivity
+    if (daysSince >= 3) delta -= 30;
+    else if (daysSince >= 2) delta -= 20;
+    else if (daysSince >= 1) delta -= 10;
+
+    // Decay from over-budget categories
+    for (const cat of categories) {
+      if (cat.weekly_limit > 0 && cat.spent > cat.weekly_limit) {
+        delta -= 5;
+      }
+    }
+  }
+
+  if (trigger === 'transaction') {
+    delta += 5;
+  }
+
+  if (trigger === 'challenge_complete') {
+    delta += 10;
+  }
+
+  // Recovery: all categories under budget
+  if (categories.length > 0) {
+    const allUnder = categories.every(c => c.spent <= c.weekly_limit);
+    if (allUnder && daysSince === 0) {
+      delta += 5;
+    }
+  }
+
+  return delta;
+}
+
+/** Pure function: derive pet mood from combined score */
 export function derivePetMood(combinedScore: number, daysSinceLastLog: number): PetMood {
   if (daysSinceLastLog >= 3) return 'critical';
 
@@ -75,23 +112,15 @@ export function derivePetMood(combinedScore: number, daysSinceLastLog: number): 
   return 'critical';
 }
 
-/**
- * Clamp a mood transition to +/- 1 level from the previous state.
- * Exception: the 3-day-no-log override can jump directly to critical.
- */
+/** Clamp a mood transition to +/- 1 level from previous */
 function clampTransition(previous: PetMood, target: PetMood, daysSinceLastLog: number): PetMood {
-  // Allow direct jump to critical for neglect override
   if (daysSinceLastLog >= 3 && target === 'critical') return 'critical';
 
   const prevIndex = MOOD_ORDER.indexOf(previous);
   const targetIndex = MOOD_ORDER.indexOf(target);
 
-  if (targetIndex > prevIndex + 1) {
-    return MOOD_ORDER[prevIndex + 1];
-  }
-  if (targetIndex < prevIndex - 1) {
-    return MOOD_ORDER[prevIndex - 1];
-  }
+  if (targetIndex > prevIndex + 1) return MOOD_ORDER[prevIndex + 1];
+  if (targetIndex < prevIndex - 1) return MOOD_ORDER[prevIndex - 1];
   return target;
 }
 
@@ -106,27 +135,32 @@ async function getDaysSinceLastLog(): Promise<number> {
 }
 
 /**
- * Main entry point: recalculate pet state from current data.
- * Called on every transaction, lesson/challenge completion, and app open.
+ * Main entry point: recalculate pet state + health from current data.
  */
 export async function recalculatePetState(trigger: string): Promise<{
   newState: PetMood;
   previousState: PetMood;
   stateChanged: boolean;
   budgetScore: number;
-  engagementBonus: number;
+  carePoints: number;
   combinedScore: number;
+  healthDelta: number;
+  newHealth: number;
 }> {
   const profile = await getPetProfile();
   const previousState = (profile?.current_state as PetMood) ?? 'neutral';
 
   const budgetScore = await calculateBudgetHealthScore();
-  const engagementBonus = await calculateEngagementBonus();
-  const combinedScore = Math.min(100, budgetScore + engagementBonus);
+  const carePoints = await calculateCarePoints();
+  const combinedScore = Math.min(100, budgetScore + carePoints);
 
   const daysSinceLastLog = await getDaysSinceLastLog();
   const rawMood = derivePetMood(combinedScore, daysSinceLastLog);
   const newState = clampTransition(previousState, rawMood, daysSinceLastLog);
+
+  // Calculate and apply health delta
+  const healthDelta = await calculateHealthDelta(trigger);
+  const newHealth = await updatePetHealth(healthDelta);
 
   // Persist state change
   if (profile) {
@@ -137,7 +171,7 @@ export async function recalculatePetState(trigger: string): Promise<{
   await addPetStateHistory({
     state: newState,
     budget_score: budgetScore,
-    engagement_bonus: engagementBonus,
+    engagement_bonus: carePoints,
     combined_score: combinedScore,
     trigger,
   });
@@ -147,8 +181,10 @@ export async function recalculatePetState(trigger: string): Promise<{
     previousState,
     stateChanged: newState !== previousState,
     budgetScore,
-    engagementBonus,
+    carePoints,
     combinedScore,
+    healthDelta,
+    newHealth,
   };
 }
 

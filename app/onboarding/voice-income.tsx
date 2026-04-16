@@ -19,9 +19,18 @@ export default function VoiceIncomeScreen() {
   const { data, updateData } = useOnboarding();
   const [amount, setAmount] = useState<number | null>(data.monthlyIncome || null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [micTrigger, setMicTrigger] = useState(0);
+
+  const speakAndAutoMic = (text: string, rate = 0.95) => {
+    Speech.speak(text, {
+      rate,
+      onDone: () => setMicTrigger((n) => n + 1),
+      onStopped: () => {},
+    });
+  };
 
   useEffect(() => {
-    Speech.speak("What's your monthly take-home pay?", { rate: 0.9 });
+    speakAndAutoMic("What's your monthly take-home pay?", 0.9);
   }, []);
 
   const handleTranscript = async (text: string) => {
@@ -33,7 +42,7 @@ export default function VoiceIncomeScreen() {
       Speech.speak(`Got it, £${Math.round(parsed)} per month`, { rate: 0.95 });
     } else {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Speech.speak("I didn't catch an amount. Try saying a number like 2000.", { rate: 0.95 });
+      speakAndAutoMic("I didn't catch an amount. Try saying a number like 2000.");
     }
     setIsProcessing(false);
   };
@@ -59,7 +68,7 @@ export default function VoiceIncomeScreen() {
           </View>
         )}
 
-        <VoiceInput onTranscript={handleTranscript} isProcessing={isProcessing} />
+        <VoiceInput onTranscript={handleTranscript} isProcessing={isProcessing} autoStartTrigger={micTrigger} />
 
         <Pressable
           style={styles.altButton}

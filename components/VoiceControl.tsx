@@ -16,17 +16,24 @@ import {
 } from 'expo-speech-recognition';
 import * as Speech from 'expo-speech';
 import { useTheme } from '../theme';
+import {
+  playMicActivateHaptic,
+  playMicDeactivateHaptic,
+  playShakeDetectedHaptic,
+} from '../services/haptics';
 
 interface VoiceControlProps {
   onSend: (text: string) => Promise<void>;
   isProcessing: boolean;
   shakeTrigger?: number; // increment to trigger mic from outside (shake-to-talk)
+  ttsTrigger?: number; // increment to auto-start mic after TTS finishes
+  onModeChange?: (mode: 'voice' | 'text') => void;
 }
 
 const MIC_SIZE = 64;
 const RING_DURATION = 1500;
 
-export default function VoiceControl({ onSend, isProcessing, shakeTrigger }: VoiceControlProps) {
+export default function VoiceControl({ onSend, isProcessing, shakeTrigger, ttsTrigger, onModeChange }: VoiceControlProps) {
   const theme = useTheme();
   const [mode, setMode] = useState<'voice' | 'text'>('voice');
   const [recognizing, setRecognizing] = useState(false);
@@ -34,6 +41,8 @@ export default function VoiceControl({ onSend, isProcessing, shakeTrigger }: Voi
   const [textInput, setTextInput] = useState('');
   const [webSpeechAvailable, setWebSpeechAvailable] = useState(true);
   const prevShakeTrigger = useRef(shakeTrigger ?? 0);
+  const prevTTSTrigger = useRef(ttsTrigger ?? 0);
+  const hadFinalResultRef = useRef(false);
 
   const mono = theme.fontsLoaded ? theme.fonts.monospace : theme.fonts.monospaceFallback;
   const fs = theme.fontScale;
@@ -90,12 +99,19 @@ export default function VoiceControl({ onSend, isProcessing, shakeTrigger }: Voi
     opacity: ring2Opacity.value,
   }));
 
-  useSpeechRecognitionEvent('start', () => setRecognizing(true));
-  useSpeechRecognitionEvent('end', () => setRecognizing(false));
+  useSpeechRecognitionEvent('start', () => {
+    hadFinalResultRef.current = false;
+    setRecognizing(true);
+  });
+  useSpeechRecognitionEvent('end', () => {
+    setRecognizing(false);
+    if (hadFinalResultRef.current) playMicDeactivateHaptic();
+  });
   useSpeechRecognitionEvent('result', (event) => {
     const text = event.results[0]?.transcript ?? '';
     setTranscript(text);
     if (event.isFinal && text.trim()) {
+      hadFinalResultRef.current = true;
       setTranscript('');
       onSend(text.trim());
     }
@@ -106,7 +122,6 @@ export default function VoiceControl({ onSend, isProcessing, shakeTrigger }: Voi
   useEffect(() => {
     if (shakeTrigger !== undefined && shakeTrigger !== prevShakeTrigger.current) {
       prevShakeTrigger.current = shakeTrigger;
-      // Switch to voice mode and trigger mic
       setMode('voice');
       (async () => {
         if (isProcessing || recognizing) return;
@@ -114,6 +129,7 @@ export default function VoiceControl({ onSend, isProcessing, shakeTrigger }: Voi
         const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
         if (!result.granted) return;
         setTranscript('');
+        playMicActivateHaptic();
         ExpoSpeechRecognitionModule.start({
           lang: 'en-US',
           interimResults: true,
@@ -122,6 +138,25 @@ export default function VoiceControl({ onSend, isProcessing, shakeTrigger }: Voi
       })();
     }
   }, [shakeTrigger, isProcessing, recognizing]);
+
+  // Auto-mic after TTS: when ttsTrigger increments, start mic
+  useEffect(() => {
+    if (ttsTrigger !== undefined && ttsTrigger !== prevTTSTrigger.current) {
+      prevTTSTrigger.current = ttsTrigger;
+      (async () => {
+        if (isProcessing || recognizing || mode !== 'voice') return;
+        const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+        if (!result.granted) return;
+        setTranscript('');
+        playMicActivateHaptic();
+        ExpoSpeechRecognitionModule.start({
+          lang: 'en-US',
+          interimResults: true,
+          continuous: false,
+        });
+      })();
+    }
+  }, [ttsTrigger, isProcessing, recognizing, mode]);
 
   const handleMicPress = async () => {
     if (isProcessing) return;
@@ -138,6 +173,7 @@ export default function VoiceControl({ onSend, isProcessing, shakeTrigger }: Voi
     if (!result.granted) return;
 
     setTranscript('');
+    playMicActivateHaptic();
     ExpoSpeechRecognitionModule.start({
       lang: 'en-US',
       interimResults: true,
@@ -157,7 +193,7 @@ export default function VoiceControl({ onSend, isProcessing, shakeTrigger }: Voi
       {/* Mode toggle */}
       <View style={styles.modeRow}>
         <Pressable
-          onPress={() => setMode('text')}
+          onPress={() => { setMode('text'); onModeChange?.('text'); }}
           accessibilityLabel="Text input mode"
           style={[
             styles.modeTab,
@@ -173,7 +209,7 @@ export default function VoiceControl({ onSend, isProcessing, shakeTrigger }: Voi
         </Pressable>
         {webSpeechAvailable && (
           <Pressable
-            onPress={() => setMode('voice')}
+            onPress={() => { setMode('voice'); onModeChange?.('voice'); }}
             accessibilityLabel="Voice input mode"
             style={[
               styles.modeTab,

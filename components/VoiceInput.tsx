@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import Animated, {
   useSharedValue,
@@ -14,19 +14,23 @@ import {
   useSpeechRecognitionEvent,
 } from 'expo-speech-recognition';
 import { Colors, Spacing, FontSize, BorderRadius } from '../constants/theme';
+import { playMicActivateHaptic, playMicDeactivateHaptic } from '../services/haptics';
 
 interface VoiceInputProps {
   onTranscript: (text: string) => Promise<void>;
   isProcessing: boolean;
+  autoStartTrigger?: number; // increment to auto-start mic (e.g. after feedback TTS)
 }
 
 const MIC_SIZE = 72;
 const RING_DURATION = 1500;
 
-export default function VoiceInput({ onTranscript, isProcessing }: VoiceInputProps) {
+export default function VoiceInput({ onTranscript, isProcessing, autoStartTrigger }: VoiceInputProps) {
   const [recognizing, setRecognizing] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [webSpeechAvailable, setWebSpeechAvailable] = useState(true);
+  const prevAutoStartTrigger = useRef(autoStartTrigger ?? 0);
+  const hadFinalResultRef = useRef(false);
 
   useEffect(() => {
     if (Platform.OS === 'web') {
@@ -95,16 +99,20 @@ export default function VoiceInput({ onTranscript, isProcessing }: VoiceInputPro
     opacity: ring2Opacity.value,
   }));
 
-  useSpeechRecognitionEvent('start', () => setRecognizing(true));
+  useSpeechRecognitionEvent('start', () => {
+    hadFinalResultRef.current = false;
+    setRecognizing(true);
+  });
   useSpeechRecognitionEvent('end', () => {
     setRecognizing(false);
+    if (hadFinalResultRef.current) playMicDeactivateHaptic();
   });
   useSpeechRecognitionEvent('result', (event) => {
     const text = event.results[0]?.transcript ?? '';
     setTranscript(text);
 
-    // If this is a final result, send it
     if (event.isFinal && text.trim()) {
+      hadFinalResultRef.current = true;
       setTranscript('');
       onTranscript(text.trim());
     }
@@ -113,6 +121,25 @@ export default function VoiceInput({ onTranscript, isProcessing }: VoiceInputPro
     console.log('Speech recognition error:', event.error, event.message);
     setRecognizing(false);
   });
+
+  // Auto-start mic when trigger increments (e.g. after feedback TTS)
+  useEffect(() => {
+    if (autoStartTrigger !== undefined && autoStartTrigger !== prevAutoStartTrigger.current) {
+      prevAutoStartTrigger.current = autoStartTrigger;
+      (async () => {
+        if (isProcessing || recognizing) return;
+        const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+        if (!result.granted) return;
+        setTranscript('');
+        playMicActivateHaptic();
+        ExpoSpeechRecognitionModule.start({
+          lang: 'en-US',
+          interimResults: true,
+          continuous: false,
+        });
+      })();
+    }
+  }, [autoStartTrigger, isProcessing, recognizing]);
 
   const handlePress = async () => {
     if (isProcessing) return;
@@ -123,11 +150,10 @@ export default function VoiceInput({ onTranscript, isProcessing }: VoiceInputPro
     }
 
     const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-    if (!result.granted) {
-      return;
-    }
+    if (!result.granted) return;
 
     setTranscript('');
+    playMicActivateHaptic();
     ExpoSpeechRecognitionModule.start({
       lang: 'en-US',
       interimResults: true,

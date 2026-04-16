@@ -21,15 +21,24 @@ export default function VoiceFlexibleScreen() {
   const autoCalc = Math.max(0, data.monthlyIncome - totalBills);
   const [amount, setAmount] = useState<number | null>(autoCalc > 0 ? autoCalc : null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [micTrigger, setMicTrigger] = useState(0);
+
+  const speakAndAutoMic = (text: string, rate = 0.95) => {
+    Speech.speak(text, {
+      rate,
+      onDone: () => setMicTrigger((n) => n + 1),
+      onStopped: () => {},
+    });
+  };
 
   useEffect(() => {
     if (autoCalc > 0) {
-      Speech.speak(
+      speakAndAutoMic(
         `After bills, you have about £${Math.round(autoCalc)} left. How much do you want for daily spending?`,
-        { rate: 0.85 }
+        0.85,
       );
     } else {
-      Speech.speak("How much do you want for daily spending each month?", { rate: 0.9 });
+      speakAndAutoMic("How much do you want for daily spending each month?", 0.9);
     }
   }, [autoCalc]);
 
@@ -42,7 +51,7 @@ export default function VoiceFlexibleScreen() {
       Speech.speak(`£${Math.round(parsed)} for flexible spending`, { rate: 0.95 });
     } else {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Speech.speak("Say an amount, like 500.", { rate: 0.95 });
+      speakAndAutoMic("Say an amount, like 500.");
     }
     setIsProcessing(false);
   };
@@ -75,7 +84,7 @@ export default function VoiceFlexibleScreen() {
           </View>
         )}
 
-        <VoiceInput onTranscript={handleTranscript} isProcessing={isProcessing} />
+        <VoiceInput onTranscript={handleTranscript} isProcessing={isProcessing} autoStartTrigger={micTrigger} />
 
         <Pressable
           style={styles.altButton}
