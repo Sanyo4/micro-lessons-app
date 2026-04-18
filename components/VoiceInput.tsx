@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
+import * as Speech from 'expo-speech';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -13,19 +14,45 @@ import {
   ExpoSpeechRecognitionModule,
   useSpeechRecognitionEvent,
 } from 'expo-speech-recognition';
-import { Colors, Spacing, FontSize, BorderRadius } from '../constants/theme';
+import { useTheme } from '../theme';
+import { useShakeDetector } from '../hooks/useShakeDetector';
+import { playMicActivateHaptic, playMicDeactivateHaptic, playShakeDetectedHaptic } from '../services/haptics';
 
 interface VoiceInputProps {
   onTranscript: (text: string) => Promise<void>;
   isProcessing: boolean;
+  autoStartTrigger?: number; // increment to auto-start mic (e.g. after feedback TTS)
+  shakeEnabled?: boolean;
 }
 
 const MIC_SIZE = 72;
 const RING_DURATION = 1500;
 
-export default function VoiceInput({ onTranscript, isProcessing }: VoiceInputProps) {
+export default function VoiceInput({
+  onTranscript,
+  isProcessing,
+  autoStartTrigger,
+  shakeEnabled = true,
+}: VoiceInputProps) {
+  const theme = useTheme();
+  const mono = theme.fontsLoaded ? theme.fonts.monospace : theme.fonts.monospaceFallback;
+  const fs = theme.fontScale;
   const [recognizing, setRecognizing] = useState(false);
   const [transcript, setTranscript] = useState('');
+  const [webSpeechAvailable, setWebSpeechAvailable] = useState(true);
+  const prevAutoStartTrigger = useRef(autoStartTrigger ?? 0);
+  const hadFinalResultRef = useRef(false);
+  const recognizingRef = useRef(false);
+  const armingRef = useRef(false);
+  const armSequenceRef = useRef(0);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      const available = typeof window !== 'undefined' &&
+        ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window);
+      setWebSpeechAvailable(available);
+    }
+  }, []);
 
   // Pulse ring animations
   const ring1Scale = useSharedValue(1);
@@ -86,23 +113,86 @@ export default function VoiceInput({ onTranscript, isProcessing }: VoiceInputPro
     opacity: ring2Opacity.value,
   }));
 
-  useSpeechRecognitionEvent('start', () => setRecognizing(true));
+  const wait = useCallback((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)), []);
+
+  const armListening = useCallback(async (interruptSpeech = false) => {
+    if (Platform.OS === 'web' || isProcessing) return;
+    if (recognizingRef.current || armingRef.current) return;
+
+    armingRef.current = true;
+    const armId = armSequenceRef.current + 1;
+    armSequenceRef.current = armId;
+
+    try {
+      if (interruptSpeech) {
+        Speech.stop();
+        await wait(80);
+      }
+
+      const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      if (!result.granted) return;
+
+      setTranscript('');
+      await playMicActivateHaptic();
+      await wait(100);
+
+      if (armSequenceRef.current !== armId || recognizingRef.current) return;
+
+      ExpoSpeechRecognitionModule.start({
+        lang: 'en-US',
+        interimResults: true,
+        continuous: false,
+      });
+    } finally {
+      if (!recognizingRef.current && armSequenceRef.current === armId) {
+        armingRef.current = false;
+      }
+    }
+  }, [isProcessing, wait]);
+
+  useSpeechRecognitionEvent('start', () => {
+    hadFinalResultRef.current = false;
+    armingRef.current = false;
+    recognizingRef.current = true;
+    setRecognizing(true);
+  });
   useSpeechRecognitionEvent('end', () => {
+    armingRef.current = false;
+    recognizingRef.current = false;
     setRecognizing(false);
+    if (hadFinalResultRef.current) playMicDeactivateHaptic();
   });
   useSpeechRecognitionEvent('result', (event) => {
     const text = event.results[0]?.transcript ?? '';
     setTranscript(text);
 
-    // If this is a final result, send it
     if (event.isFinal && text.trim()) {
+      hadFinalResultRef.current = true;
       setTranscript('');
       onTranscript(text.trim());
     }
   });
   useSpeechRecognitionEvent('error', (event) => {
     console.log('Speech recognition error:', event.error, event.message);
+    armingRef.current = false;
+    recognizingRef.current = false;
     setRecognizing(false);
+  });
+
+  // Auto-start mic when trigger increments (e.g. after feedback TTS)
+  useEffect(() => {
+    if (autoStartTrigger !== undefined && autoStartTrigger !== prevAutoStartTrigger.current) {
+      prevAutoStartTrigger.current = autoStartTrigger;
+      void armListening(false);
+    }
+  }, [autoStartTrigger, armListening]);
+
+  useShakeDetector({
+    onShake: () => {
+      void playShakeDetectedHaptic();
+      void armListening(true);
+    },
+    enabled: shakeEnabled && !isProcessing && !recognizing,
   });
 
   const handlePress = async () => {
@@ -113,18 +203,18 @@ export default function VoiceInput({ onTranscript, isProcessing }: VoiceInputPro
       return;
     }
 
-    const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-    if (!result.granted) {
-      return;
-    }
-
-    setTranscript('');
-    ExpoSpeechRecognitionModule.start({
-      lang: 'en-US',
-      interimResults: true,
-      continuous: false,
-    });
+    void armListening(true);
   };
+
+  if (Platform.OS === 'web' && !webSpeechAvailable) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.transcript}>
+          Voice input requires Chrome or Edge. Use text input instead.
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -137,6 +227,11 @@ export default function VoiceInput({ onTranscript, isProcessing }: VoiceInputPro
             styles.micButton,
             recognizing && styles.micButtonActive,
             isProcessing && styles.micButtonDisabled,
+            {
+              backgroundColor: recognizing
+                ? theme.colors.interactive.primaryPressed
+                : theme.colors.interactive.primary,
+            },
           ]}
           onPress={handlePress}
           accessibilityRole="button"
@@ -145,19 +240,37 @@ export default function VoiceInput({ onTranscript, isProcessing }: VoiceInputPro
               ? 'Processing'
               : recognizing
                 ? 'Stop recording'
-                : 'Start voice input'
+              : 'Start voice input'
           }
           accessibilityState={{ disabled: isProcessing, busy: isProcessing }}
         >
-          <Text style={styles.micIcon} importantForAccessibility="no">
-            {recognizing ? '⏹️' : '🎙️'}
+          <Text
+            style={[
+              styles.micIcon,
+              {
+                color: theme.colors.interactive.primaryText,
+                fontFamily: mono,
+                fontSize: 12 * fs,
+              },
+            ]}
+            importantForAccessibility="no"
+          >
+            {recognizing ? 'STOP' : 'MIC'}
           </Text>
         </Pressable>
       </View>
 
       {/* Transcript or hint */}
       <Text
-        style={styles.transcript}
+        style={[
+          styles.transcript,
+          {
+            color: theme.colors.base.textSecondary,
+            fontFamily: mono,
+            fontSize: theme.typeScale.bodySmall * fs,
+            paddingHorizontal: theme.spacing.xl,
+          },
+        ]}
         accessibilityLiveRegion="polite"
       >
         {isProcessing
@@ -166,7 +279,7 @@ export default function VoiceInput({ onTranscript, isProcessing }: VoiceInputPro
             ? transcript
             : recognizing
               ? 'Listening...'
-              : 'Tap to speak'}
+              : 'Shake to speak. Tap if needed.'}
       </Text>
     </View>
   );
@@ -175,8 +288,8 @@ export default function VoiceInput({ onTranscript, isProcessing }: VoiceInputPro
 const styles = StyleSheet.create({
   container: {
     alignItems: 'center',
-    gap: Spacing.md,
-    paddingVertical: Spacing.sm,
+    gap: 12,
+    paddingVertical: 8,
   },
   micContainer: {
     width: MIC_SIZE * 2,
@@ -189,35 +302,30 @@ const styles = StyleSheet.create({
     width: MIC_SIZE,
     height: MIC_SIZE,
     borderRadius: MIC_SIZE / 2,
-    backgroundColor: Colors.voicePulse,
+    backgroundColor: 'rgba(136, 201, 161, 0.28)',
   },
   micButton: {
     width: MIC_SIZE,
     height: MIC_SIZE,
     borderRadius: MIC_SIZE / 2,
-    backgroundColor: Colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: Colors.shadow,
+    shadowColor: '#000000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.15,
     shadowRadius: 12,
     elevation: 4,
   },
-  micButtonActive: {
-    backgroundColor: Colors.primaryDark,
-  },
+  micButtonActive: {},
   micButtonDisabled: {
-    backgroundColor: Colors.textMuted,
+    opacity: 0.45,
   },
   micIcon: {
-    fontSize: 28,
+    fontWeight: '700',
+    letterSpacing: 0.8,
   },
   transcript: {
-    fontSize: FontSize.body,
-    color: Colors.textSecondary,
     textAlign: 'center',
     minHeight: 22,
-    paddingHorizontal: Spacing.xxl,
   },
 });

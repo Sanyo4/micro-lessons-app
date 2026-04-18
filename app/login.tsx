@@ -1,4 +1,5 @@
-import { useState, useCallback } from 'react';
+// Login screen — biometric first, PIN fallback
+import { useState, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, Alert, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { useSharedValue, useAnimatedStyle, withSequence, withTiming } from 'react-native-reanimated';
@@ -6,16 +7,48 @@ import * as Haptics from 'expo-haptics';
 import * as Speech from 'expo-speech';
 import { router } from 'expo-router';
 import NumPad from '../components/NumPad';
+import PetTerminal from '../components/pet/PetTerminal';
 import { useAuth } from '../services/authContext';
-import { Colors, Spacing, FontSize, BorderRadius } from '../constants/theme';
+import { getPetProfile, type PetProfile } from '../services/database';
+import { useTheme, type PetMood } from '../theme';
 
 const PIN_LENGTH = 4;
 
 export default function LoginScreen() {
+  const theme = useTheme();
   const [pin, setPin] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
-  const { login, resetApp } = useAuth();
+  const [showPin, setShowPin] = useState(false);
+  const [pet, setPet] = useState<PetProfile | null>(null);
+  const { login, loginWithBiometrics, hasBiometrics, biometricType, resetApp } = useAuth();
   const shakeX = useSharedValue(0);
+
+  const mono = theme.fontsLoaded ? theme.fonts.monospace : theme.fonts.monospaceFallback;
+  const biometricLabel = biometricType === 'facial' ? 'Face ID' : 'fingerprint';
+
+  useEffect(() => {
+    getPetProfile().then(setPet).catch(() => {});
+  }, []);
+
+  // Auto-attempt biometric on mount
+  useEffect(() => {
+    if (!hasBiometrics) {
+      setShowPin(true);
+      return;
+    }
+    (async () => {
+      Speech.speak(`Welcome back. Authenticate with your ${biometricLabel}.`, { rate: 0.9 });
+      const success = await loginWithBiometrics();
+      if (success) {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Speech.speak('Welcome back', { rate: 0.9 });
+        router.replace('/(tabs)/');
+      } else {
+        setShowPin(true);
+        Speech.speak('Enter your PIN instead.', { rate: 0.95 });
+      }
+    })();
+  }, [hasBiometrics, biometricLabel, loginWithBiometrics]);
 
   const shakeStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: shakeX.value }],
@@ -53,6 +86,15 @@ export default function LoginScreen() {
     setPin((prev) => prev.slice(0, -1));
   }, []);
 
+  const handleRetryBiometric = async () => {
+    const success = await loginWithBiometrics();
+    if (success) {
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Speech.speak('Welcome back', { rate: 0.9 });
+      router.replace('/(tabs)/');
+    }
+  };
+
   const handleForgotPin = () => {
     Alert.alert(
       'Reset App',
@@ -64,96 +106,134 @@ export default function LoginScreen() {
           style: 'destructive',
           onPress: async () => {
             await resetApp();
-            router.replace('/onboarding/welcome');
+            router.replace('/onboarding/shake-practice');
           },
         },
       ]
     );
   };
 
+  const petName = pet?.name ?? 'Buddy';
+  const petState = (pet?.current_state as PetMood) ?? 'neutral';
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.base.background }]}>
       <View style={styles.content}>
-        <Text style={styles.title} accessibilityRole="header">Welcome Back</Text>
-        <Text style={styles.subtitle}>Enter your 4-digit PIN</Text>
+        <View style={styles.petSection}>
+          <PetTerminal petState={petState} petName={petName} compact />
+        </View>
 
-        <Animated.View style={[styles.dotsRow, shakeStyle]}>
-          {Array.from({ length: PIN_LENGTH }, (_, i) => (
-            <View
-              key={i}
-              style={[styles.dot, i < pin.length ? styles.dotFilled : styles.dotEmpty]}
-              accessibilityLabel={i < pin.length ? 'Digit entered' : 'Digit not entered'}
+        {showPin ? (
+          <>
+            <View style={[styles.pinTerminal, { backgroundColor: theme.colors.base.terminal, borderRadius: theme.radius.terminal }]}>
+              <Text style={[styles.pinPrompt, { color: theme.colors.base.terminalText, fontFamily: mono }]}>
+                {`── Enter PIN to check on\n   ${petName} ──`}
+              </Text>
+
+              <Animated.View style={[styles.dotsRow, shakeStyle]}>
+                {Array.from({ length: PIN_LENGTH }, (_, i) => (
+                  <View
+                    key={i}
+                    style={[
+                      styles.dot,
+                      {
+                        borderColor: theme.colors.interactive.primary,
+                        backgroundColor: i < pin.length ? theme.colors.interactive.primary : 'transparent',
+                      },
+                    ]}
+                    accessibilityLabel={i < pin.length ? 'Digit entered' : 'Digit not entered'}
+                  />
+                ))}
+              </Animated.View>
+            </View>
+
+            <NumPad
+              onDigit={handleDigit}
+              onDelete={handleDelete}
+              disabled={isVerifying}
+              currentLength={pin.length}
+              maxLength={PIN_LENGTH}
             />
-          ))}
-        </Animated.View>
 
-        <NumPad
-          onDigit={handleDigit}
-          onDelete={handleDelete}
-          disabled={isVerifying}
-          currentLength={pin.length}
-          maxLength={PIN_LENGTH}
-        />
-
-        <Pressable
-          onPress={handleForgotPin}
-          style={styles.forgotButton}
-          accessibilityRole="button"
-          accessibilityLabel="Forgot PIN — reset app"
-        >
-          <Text style={styles.forgotText}>Forgot PIN?</Text>
-        </Pressable>
+            <View style={styles.bottomLinks}>
+              {hasBiometrics && (
+                <Pressable
+                  onPress={handleRetryBiometric}
+                  style={styles.linkButton}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Use ${biometricLabel} instead`}
+                >
+                  <Text style={[styles.linkText, { color: theme.colors.interactive.primary, fontFamily: mono }]}>
+                    Use {biometricLabel}
+                  </Text>
+                </Pressable>
+              )}
+              <Pressable
+                onPress={handleForgotPin}
+                style={styles.linkButton}
+                accessibilityRole="button"
+                accessibilityLabel="Forgot PIN — reset app"
+              >
+                <Text style={[styles.linkText, { color: theme.colors.interactive.danger }]}>Forgot PIN?</Text>
+              </Pressable>
+            </View>
+          </>
+        ) : (
+          <View style={[styles.pinTerminal, { backgroundColor: theme.colors.base.terminal, borderRadius: theme.radius.terminal }]}>
+            <Text style={{ color: theme.colors.base.terminalText, fontFamily: mono, fontSize: 14, textAlign: 'center' }}>
+              {'> authenticating...'}
+            </Text>
+          </View>
+        )}
       </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
+  container: { flex: 1 },
   content: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: Spacing.xxl,
-    gap: Spacing.xxl,
+    paddingHorizontal: 24,
+    gap: 20,
   },
-  title: {
-    fontSize: FontSize.title,
-    fontWeight: '700',
-    color: Colors.text,
+  petSection: { width: '100%' },
+  pinTerminal: {
+    width: '100%',
+    padding: 16,
+    alignItems: 'center',
   },
-  subtitle: {
-    fontSize: FontSize.body,
-    color: Colors.textSecondary,
+  pinPrompt: {
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 16,
+    lineHeight: 22,
   },
   dotsRow: {
     flexDirection: 'row',
-    gap: Spacing.xl,
-    paddingVertical: Spacing.lg,
+    gap: 20,
+    paddingVertical: 8,
   },
   dot: {
     width: 20,
     height: 20,
     borderRadius: 10,
     borderWidth: 2,
-    borderColor: Colors.primary,
   },
-  dotFilled: {
-    backgroundColor: Colors.primary,
+  bottomLinks: {
+    alignItems: 'center',
+    gap: 8,
   },
-  dotEmpty: {
-    backgroundColor: 'transparent',
+  linkButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    minHeight: 44,
+    justifyContent: 'center',
   },
-  forgotButton: {
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.xl,
-  },
-  forgotText: {
-    fontSize: FontSize.sm,
-    color: Colors.danger,
+  linkText: {
+    fontSize: 14,
     fontWeight: '600',
   },
 });

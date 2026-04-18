@@ -1,49 +1,35 @@
-// import {
-//   CactusLM,
-//   type CactusLMMessage,
-//   type CactusLMTool,
-// } from 'cactus-react-native';
-
-// --- HuggingFace Inference API (dev mode replacement for Cactus on-device) ---
-const HF_API_URL = 'https://api-inference.huggingface.co/models/google/functiongemma-270m-it/v1/chat/completions';
-const HF_API_KEY = process.env.EXPO_PUBLIC_HF_API_KEY ?? '';
-
-type CactusLMMessage = { role: 'system' | 'user' | 'assistant'; content: string };
-type CactusLMTool = {
-  name: string;
-  description: string;
-  parameters: {
-    type: 'object';
-    properties: Record<string, { type: string; description: string }>;
-    required: string[];
-  };
-};
+// On-device AI via Cactus (FunctionGemma) — no cloud dependency
+import {
+  CactusLM,
+  type CactusLMMessage,
+  type CactusLMTool,
+} from 'cactus-react-native';
 
 import { getUserFacingFunctions } from '../data/functionDefs';
-import { executeFunctionCall, type FunctionCallResult } from './functionExecutor';
-import { getBudgetCategories, getAppSettings, type BudgetCategory } from './database';
+import type { MicroLesson } from '../data/lessons';
+import { executeFunctionCall, type FunctionCallResult, type ContentType } from './functionExecutor';
+import { getBudgetCategories, getBudgetCategory, getAppSettings, type BudgetCategory } from './database';
 import { getPlanById } from '../data/plans';
+import { conversationContext, type ContextResult } from './conversationContext';
+
+export interface PendingTransaction {
+  amount: number;
+  category: string;
+  categoryName: string;
+  description: string;
+  budgetSpent: number;
+  budgetLimit: number;
+}
 
 export interface AIResult {
   responseText: string;
   executedFunctions: FunctionCallResult[];
-  lesson?: {
-    id: string;
-    title: string;
-    body: string;
-    insight: string;
-    triggerType: string;
-    xpReward: number;
-    challengeTemplate: {
-      title: string;
-      description: string;
-      type: string;
-      duration_days: number;
-      xp_reward: number;
-    };
-  } | null;
+  lesson?: MicroLesson | null;
   xpEarned: number;
-  navigateTo?: string | null;
+  contentType?: ContentType;
+  pendingTransaction?: PendingTransaction | null;
+  game?: string | null;
+  lessonAction?: 'accept' | 'dismiss';
 }
 
 const PERSONA_PROMPTS: Record<string, string> = {
@@ -53,57 +39,204 @@ const PERSONA_PROMPTS: Record<string, string> = {
 };
 
 class GemmaAIService {
-  // private model: CactusLM | null = null;  // cactus on-device model
+  private model: CactusLM | null = null;
   private isInitialized = false;
   private isInitializing = false;
+  // Tracks the last category referenced — for follow-up commands like "increase by 5"
+  private lastCategoryId: string | null = null;
 
   async init(onProgress?: (progress: number) => void): Promise<void> {
     if (this.isInitialized || this.isInitializing) return;
     this.isInitializing = true;
 
-    // --- HuggingFace API: no download/init needed ---
-    onProgress?.(1);
-    this.isInitialized = true;
-    this.isInitializing = false;
-
-    // --- Cactus on-device init (commented out) ---
-    // try {
-    //   this.model = new CactusLM({
-    //     model: 'functiongemma-270m-it',
-    //   });
-    //   await this.model.download({
-    //     onProgress: (progress) => {
-    //       onProgress?.(progress);
-    //     },
-    //   });
-    //   await this.model.init();
-    //   this.isInitialized = true;
-    // } catch (error) {
-    //   console.error('Failed to initialize AI model:', error);
-    //   throw error;
-    // } finally {
-    //   this.isInitializing = false;
-    // }
+    try {
+      this.model = new CactusLM({
+        model: 'functiongemma-270m-it',
+      });
+      await this.model.download({
+        onProgress: (progress) => {
+          onProgress?.(progress);
+        },
+      });
+      await this.model.init();
+      this.isInitialized = true;
+    } catch (error) {
+      console.error('Failed to initialize AI model:', error);
+      throw error;
+    } finally {
+      this.isInitializing = false;
+    }
   }
 
   getInitStatus(): boolean {
     return this.isInitialized;
   }
 
-  async processUserInput(userText: string): Promise<AIResult> {
+  /**
+   * Phase 1: Parse user input — deterministic routing first, Gemma only for spending NLU.
+   *
+   * Architecture (in priority order):
+   * 1. ConversationContext intercept (confirmation, games, lesson offers)
+   * 2. Deterministic keyword router (instant, 100% reliable)
+   * 3. Gemma LLM (only for log_transaction — the one task needing NLU)
+   * 4. Fallback keyword parser (catches Gemma misses for spending)
+   */
+  async parseUserInput(userText: string): Promise<AIResult> {
+    // 1. Conversation context intercept (multi-step flows)
+    const contextResult = await conversationContext.intercept(userText);
+    if (contextResult.handled) {
+      return this.contextResultToAIResult(contextResult);
+    }
+
+    const lowerText = userText.toLowerCase().trim();
+
+    // 2. Deterministic keyword router — handles ~80% of intents instantly
+    const deterministicResult = await this.deterministicRoute(lowerText, userText);
+    if (deterministicResult) return deterministicResult;
+
+    // 3. Gemma LLM — only for spending/transaction parsing (NLU)
+    // This is the one task where keyword matching isn't enough:
+    // "spent 5 quid on a flat white" → {category: 'coffee', amount: 5, description: 'flat white'}
+    const gemmaResult = await this.parseWithGemma(userText);
+    if (gemmaResult) return gemmaResult;
+
+    // 4. Fallback — keyword-based spending detection
+    return this.fallbackSpendingParse(userText);
+  }
+
+  /**
+   * Deterministic router — keyword matching for all non-spending intents.
+   * Returns null if no match (passes through to Gemma).
+   */
+  private async deterministicRoute(lower: string, original: string): Promise<AIResult | null> {
+    const categories = await getBudgetCategories();
+    const matchedCategory = this.findMatchedCategory(lower, categories);
+    const amountMatch = original.match(/(\d+(?:\.\d{1,2})?)/);
+    const parsedAmount = amountMatch ? parseFloat(amountMatch[1]) : undefined;
+
+    const hasBudgetAdjustIntent = [
+      /\badjust\b/,
+      /change limit/,
+      /\bincrease\b/,
+      /\bdecrease\b/,
+      /\braise\b/,
+      /\blower\b/,
+      /\breduce\b/,
+      /\bedit\b/,
+      /\bset\b/,
+      /\bmake\b/,
+    ].some((pattern) => pattern.test(lower));
+    if (hasBudgetAdjustIntent) {
+      let targetCategory = matchedCategory;
+
+      if (!targetCategory && this.lastCategoryId) {
+        targetCategory = categories.find((category) => category.id === this.lastCategoryId) ?? undefined;
+      }
+
+      if (!targetCategory) {
+        return {
+          responseText: 'Which category? Say "increase food by 5" or "set coffee to 20".',
+          executedFunctions: [],
+          lesson: null,
+          xpEarned: 0,
+        };
+      }
+
+      const direction = lower.includes('increase') || lower.includes('raise') || lower.includes('more')
+        ? 'increase'
+        : lower.includes('decrease') || lower.includes('lower') || lower.includes('less') || lower.includes('reduce')
+          ? 'decrease'
+          : undefined;
+
+      const args: Record<string, unknown> = { category: targetCategory.id };
+      if ((lower.includes('set') || lower.includes('make')) && parsedAmount !== undefined) {
+        args.target_amount = parsedAmount;
+      } else {
+        if (direction) args.direction = direction;
+        if (parsedAmount !== undefined) args.amount = parsedAmount;
+      }
+
+      return this.executeDeterministic('adjust_budget_limit', args);
+    }
+
+    const categoryDetailKeywords = ['tell me about', 'details for', 'how much', 'about my', 'check', 'show', 'budget for'];
+    const wantsCategoryBudget = Boolean(matchedCategory) && (
+      categoryDetailKeywords.some((kw) => lower.includes(kw)) ||
+      (lower.includes('budget') && !lower.includes("how's my budget") && !lower.includes('show my budget') && !lower.includes('overall'))
+    );
+    if (matchedCategory && wantsCategoryBudget) {
+      return this.executeDeterministic('get_category_detail', { category: matchedCategory.id });
+    }
+
+    // Static intent routes — order: specific phrases before generic words
+    const routes: Array<{ fn: string; args: Record<string, unknown>; keywords: string[] }> = [
+      { fn: 'get_help', args: {}, keywords: ['help', 'what can i do', 'what can i say'] },
+      { fn: 'open_settings', args: {}, keywords: ['settings', 'open settings', 'preferences', 'edit name', 'rename'] },
+      { fn: 'accept_challenge', args: {}, keywords: ['start a challenge', 'accept challenge', 'new quest', 'start quest', 'start challenge'] },
+      { fn: 'get_budget_overview', args: {}, keywords: ['budget', 'budgets', 'how much left', 'overview', "how's my budget"] },
+      { fn: 'get_quest_log', args: {}, keywords: ['quest log', 'quests', 'quest progress', 'challenges', 'my challenges', 'show quests'] },
+      { fn: 'check_pet_status', args: {}, keywords: ['how is buddy', "how's buddy", 'pet status', 'how are you'] },
+      { fn: 'get_recent_transactions', args: {}, keywords: ['recent', 'last transactions', 'what did i spend', 'history', 'what have i spent'] },
+      { fn: 'get_mood_history', args: {}, keywords: ['mood history', 'mood', 'how has buddy been'] },
+      { fn: 'accept_challenge', args: {}, keywords: ['challenge'] }, // generic "challenge" as last resort
+    ];
+
+    for (const route of routes) {
+      if (route.keywords.some((kw) => lower.includes(kw))) {
+        return this.executeDeterministic(route.fn, route.args);
+      }
+    }
+
+    // Savings projection — needs number extraction
+    const saveMatch = lower.match(/(?:save|saving)\s*(?:\u00A3)?(\d+(?:\.\d{1,2})?)/);
+    if (saveMatch) {
+      const period = lower.includes('year') ? 'yearly' : lower.includes('week') ? 'weekly' : 'monthly';
+      return this.executeDeterministic('get_savings_projection', { daily_amount: parseFloat(saveMatch[1]), period });
+    }
+
+    return null; // No deterministic match — pass to Gemma
+  }
+
+  /**
+   * Execute a deterministically-routed function and return as AIResult.
+   */
+  private async executeDeterministic(fn: string, args: Record<string, unknown>): Promise<AIResult> {
+    const fnResult = await executeFunctionCall({ name: fn, arguments: args });
+    const categoryArg = typeof args.category === 'string' ? args.category : null;
+    if (fnResult.success) {
+      if (fn === 'get_budget_overview') {
+        this.lastCategoryId = null;
+      } else if (categoryArg && ['get_category_detail', 'adjust_budget_limit', 'check_budget_status'].includes(fn)) {
+        this.lastCategoryId = categoryArg;
+      }
+    }
+    return {
+      responseText: fnResult.responseText || '',
+      executedFunctions: [fnResult],
+      lesson: null,
+      xpEarned: fnResult.xpEarned,
+      contentType: fnResult.contentType,
+    };
+  }
+
+  /**
+   * Gemma LLM — only called for spending/transaction parsing.
+   * Stripped-down prompt: only log_transaction + check_budget_status + get_spending_summary.
+   * Lower temperature (0.0), topK=1 for greedy deterministic decoding.
+   */
+  private async parseWithGemma(userText: string): Promise<AIResult | null> {
+    if (!this.isInitialized || !this.model) return null;
+
     const budgetState = await getBudgetCategories();
     const categoryIds = budgetState.map((c) => c.id);
     const budgetContext = this.buildBudgetContext(budgetState);
 
-    // Load persona for system prompt
-    const settings = await getAppSettings();
-    const personaPrompt = PERSONA_PROMPTS[settings?.financial_persona || 'beginner'] || PERSONA_PROMPTS.beginner;
+    // Only send spending-related functions to Gemma — its strength
+    const spendingFunctions = getUserFacingFunctions(categoryIds).filter(
+      (fn) => ['log_transaction', 'check_budget_status', 'get_spending_summary', 'get_category_detail'].includes(fn.name)
+    );
 
-    // Get dynamic function defs based on actual categories
-    const userFunctions = getUserFacingFunctions(categoryIds);
-
-    // Convert our function definitions to Cactus Tool format
-    const tools: CactusLMTool[] = userFunctions.map((fn) => ({
+    const tools: CactusLMTool[] = spendingFunctions.map((fn) => ({
       name: fn.name,
       description: fn.description,
       parameters: {
@@ -121,136 +254,135 @@ class GemmaAIService {
     const messages: CactusLMMessage[] = [
       {
         role: 'system',
-        content: `You are a financial assistant for a budgeting app. Parse the user's natural language input and call the appropriate function.
-
-When the user reports spending, call log_transaction with the category, amount, and description.
-When the user asks to see their budget, lessons, or challenges, call navigate_to_screen.
-When the user asks about their spending, call check_budget_status or get_spending_summary.
-
-${personaPrompt}
-
-Current budget state:
+        content: `Parse spending input. Extract the category, amount, and description.
+Call log_transaction for spending. Call check_budget_status or get_spending_summary for queries.
+Categories: ${categoryIds.join(', ')}
 ${budgetContext}`,
       },
-      {
-        role: 'user',
-        content: userText,
-      },
+      { role: 'user', content: userText },
     ];
 
     try {
-      if (!this.isInitialized) throw new Error('Model not initialized');
-
-      // --- HuggingFace Inference API call ---
-      if (!HF_API_KEY) console.warn('[AI] HF_API_KEY is empty — check .env.local has EXPO_PUBLIC_HF_API_KEY set');
-
-      const hfRes = await fetch(HF_API_URL, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${HF_API_KEY}`,
-          'Content-Type': 'application/json',
+      const result = await this.model.complete({
+        messages,
+        tools,
+        options: {
+          temperature: 0.0,    // Greedy — deterministic
+          topK: 1,             // Always pick most probable token
+          maxTokens: 128,      // Function calls are short
+          forceTools: true,
         },
-        body: JSON.stringify({
-          messages,
-          tools: tools.map((t) => ({ type: 'function', function: t })),
-          tool_choice: 'required', // equivalent to cactus forceTools: true
-          temperature: 0.3,
-          max_tokens: 256,
-        }),
       });
 
-      if (!hfRes.ok) {
-        const errText = await hfRes.text();
-        console.error(`[AI] HF API error ${hfRes.status}:`, errText);
-        throw new Error(`HF API ${hfRes.status}: ${errText}`);
-      }
+      if (!result.functionCalls?.length) return null;
 
-      const hfData = await hfRes.json();
-      console.log('[AI] HF response:', JSON.stringify(hfData).slice(0, 300));
-      const hfMessage = hfData.choices?.[0]?.message;
-      const result = {
-        response: hfMessage?.content ?? '',
-        functionCalls: hfMessage?.tool_calls?.map((tc: { function: { name: string; arguments: string } }) => ({
-          name: tc.function.name,
-          arguments: JSON.parse(tc.function.arguments),
-        })) ?? [],
-      };
-
-      // --- Cactus on-device completion (commented out) ---
-      // const result = await this.model.complete({
-      //   messages,
-      //   tools,
-      //   options: {
-      //     temperature: 0.3,
-      //     maxTokens: 256,
-      //     forceTools: true,
-      //   },
-      // });
-
+      let pendingTransaction: PendingTransaction | null = null;
       const executedFunctions: FunctionCallResult[] = [];
-      let responseText = result.response || '';
       let totalXP = 0;
+      let responseText = '';
+      let contentType: ContentType | undefined;
       let lessonResult: AIResult['lesson'] = null;
-      let navigateTo: string | null = null;
 
-      // Execute any function calls from the model
-      if (result.functionCalls && result.functionCalls.length > 0) {
-        for (const call of result.functionCalls) {
-          // Handle navigation separately
-          if (call.name === 'navigate_to_screen') {
-            navigateTo = (call.arguments as Record<string, unknown>).screen as string;
-            continue;
-          }
+      for (const call of result.functionCalls) {
+        if (call.name === 'log_transaction') {
+          const args = call.arguments as Record<string, unknown>;
+          const category = args.category as string;
+          const amount = args.amount as number;
+          const description = (args.description as string) || category;
 
+          const budgetCat = await getBudgetCategory(category);
+          const catName = budgetState.find((c) => c.id === category)?.name || category;
+
+          pendingTransaction = {
+            amount,
+            category,
+            categoryName: catName,
+            description,
+            budgetSpent: budgetCat?.spent ?? 0,
+            budgetLimit: budgetCat?.weekly_limit ?? 0,
+          };
+        } else {
           const fnResult = await executeFunctionCall({
             name: call.name,
             arguments: call.arguments as Record<string, unknown>,
           });
+          const categoryArg = (call.arguments as Record<string, unknown>).category;
+          if (fnResult.success) {
+            if (call.name === 'get_budget_overview') {
+              this.lastCategoryId = null;
+            } else if (
+              typeof categoryArg === 'string' &&
+              ['check_budget_status', 'get_category_detail', 'adjust_budget_limit'].includes(call.name)
+            ) {
+              this.lastCategoryId = categoryArg;
+            }
+          }
           executedFunctions.push(fnResult);
           totalXP += fnResult.xpEarned;
-
-          if (fnResult.lesson) {
-            lessonResult = fnResult.lesson;
-          }
-
-          if (fnResult.responseText) {
-            responseText = fnResult.responseText;
-          }
+          if (fnResult.responseText) responseText = fnResult.responseText;
+          if (fnResult.contentType) contentType = fnResult.contentType;
+          if (fnResult.lesson) lessonResult = fnResult.lesson;
         }
-
-      } else {
-        // Model returned no function calls despite forceTools — use fallback
-        return this.fallbackParse(userText);
       }
 
-      // Build a friendly response if we don't have one
+      if (pendingTransaction) {
+        conversationContext.startConfirmation(pendingTransaction);
+        contentType = 'confirmation';
+      }
+
       if (!responseText && executedFunctions.length > 0) {
         responseText = this.buildResponseText(executedFunctions);
       }
 
-      // If navigating, no need for response text
-      if (navigateTo) {
-        return {
-          responseText: responseText || '',
-          executedFunctions,
-          lesson: lessonResult,
-          xpEarned: totalXP,
-          navigateTo,
-        };
-      }
-
       return {
-        responseText: responseText || "I couldn't quite understand that. Try something like \"spent 5 quid on coffee\" or \"show my budget\".",
+        responseText: responseText || '',
         executedFunctions,
         lesson: lessonResult,
         xpEarned: totalXP,
-        navigateTo: null,
+        contentType,
+        pendingTransaction,
       };
     } catch (error) {
-      console.error('AI processing error:', error);
-      // Fallback: try to parse manually
-      return this.fallbackParse(userText);
+      console.error('Gemma parsing error:', error);
+      return null; // Fall through to keyword spending parser
     }
+  }
+
+  /**
+   * Phase 2: Execute a confirmed transaction.
+   * Called after user confirms in the ConfirmationSheet.
+   */
+  async executeConfirmedTransaction(pending: PendingTransaction): Promise<AIResult> {
+    const fnResult = await executeFunctionCall({
+      name: 'log_transaction',
+      arguments: {
+        category: pending.category,
+        amount: pending.amount,
+        description: pending.description,
+      },
+    });
+
+    // Start game flow if triggered
+    if (fnResult.game) {
+      conversationContext.startGame(fnResult.game as 'needs_vs_wants' | 'bnpl');
+    }
+
+    return {
+      responseText: fnResult.responseText || `Logged \u00A3${pending.amount.toFixed(2)} to ${pending.categoryName}`,
+      executedFunctions: [fnResult],
+      lesson: fnResult.lesson || null,
+      xpEarned: fnResult.xpEarned,
+      contentType: fnResult.game ? (fnResult.game === 'needs_vs_wants' ? 'game_needs_vs_wants' : 'game_bnpl') : undefined,
+      game: fnResult.game || null,
+    };
+  }
+
+  /**
+   * Legacy method — calls parseUserInput for backward compatibility.
+   * @deprecated Use parseUserInput + executeConfirmedTransaction instead.
+   */
+  async processUserInput(userText: string): Promise<AIResult> {
+    return this.parseUserInput(userText);
   }
 
   async checkTimeTriggers(): Promise<AIResult | null> {
@@ -270,18 +402,38 @@ ${budgetContext}`,
         executedFunctions: [fnResult],
         lesson: fnResult.lesson,
         xpEarned: fnResult.xpEarned,
-        navigateTo: null,
       };
     }
 
     return null;
   }
 
+  private contextResultToAIResult(ctx: ContextResult): AIResult {
+    return {
+      responseText: ctx.responseText || '',
+      executedFunctions: [],
+      lesson: null,
+      xpEarned: ctx.xpEarned || 0,
+      contentType: ctx.contentType,
+      pendingTransaction: ctx.executeTransaction ?? (ctx.contentType === 'confirmation' ? (ctx.data as PendingTransaction) : null),
+      game: ctx.gameState?.type || null,
+      lessonAction: ctx.lessonAction,
+    };
+  }
+
+  private findMatchedCategory(lowerText: string, categories: BudgetCategory[]): BudgetCategory | undefined {
+    return categories.find(
+      (category) =>
+        lowerText.includes(category.name.toLowerCase()) ||
+        lowerText.includes(category.id.toLowerCase())
+    );
+  }
+
   private buildBudgetContext(categories: BudgetCategory[]): string {
     return categories
       .map(
         (cat) =>
-          `- ${cat.name} (${cat.icon}): £${cat.spent.toFixed(2)} / £${cat.weekly_limit.toFixed(2)} ${cat.spent > cat.weekly_limit ? '⚠️ EXCEEDED' : cat.spent > cat.weekly_limit * 0.8 ? '⚠️ Near limit' : '✅ OK'}`
+          `- ${cat.name} (${cat.icon}): \u00A3${cat.spent.toFixed(2)} / \u00A3${cat.weekly_limit.toFixed(2)} ${cat.spent > cat.weekly_limit ? '\u26A0\uFE0F EXCEEDED' : cat.spent > cat.weekly_limit * 0.8 ? '\u26A0\uFE0F Near limit' : '\u2705 OK'}`
       )
       .join('\n');
   }
@@ -290,31 +442,17 @@ ${budgetContext}`,
     const logFn = executedFunctions.find((f) => f.functionName === 'log_transaction');
     if (logFn && logFn.success) {
       const params = logFn.params as Record<string, unknown>;
-      return `Got it — £${params.amount} ${params.description} logged to ${(params.category as string).charAt(0).toUpperCase() + (params.category as string).slice(1)}`;
+      return `Got it \u2014 \u00A3${params.amount} ${params.description} logged to ${(params.category as string).charAt(0).toUpperCase() + (params.category as string).slice(1)}`;
     }
     return '';
   }
 
-  private async fallbackParse(userText: string): Promise<AIResult> {
-    // Check for navigation intents first
+  /**
+   * Last-resort spending parser — keyword matching for transaction detection.
+   * Called only after deterministic router AND Gemma both failed.
+   */
+  private async fallbackSpendingParse(userText: string): Promise<AIResult> {
     const lowerText = userText.toLowerCase();
-    const navKeywords: Record<string, string[]> = {
-      budget: ['budget', 'budgets', 'spending', 'how much'],
-      lessons: ['lesson', 'lessons', 'learn', 'teach'],
-      challenges: ['challenge', 'challenges'],
-    };
-
-    for (const [screen, keywords] of Object.entries(navKeywords)) {
-      if (keywords.some((kw) => lowerText.includes(kw))) {
-        return {
-          responseText: '',
-          executedFunctions: [],
-          lesson: null,
-          xpEarned: 0,
-          navigateTo: screen,
-        };
-      }
-    }
 
     // Build keyword map from DB categories + plan categories
     const categories = await getBudgetCategories();
@@ -323,10 +461,8 @@ ${budgetContext}`,
 
     const categoryKeywords: Record<string, string[]> = {};
     for (const cat of categories) {
-      // Start with category name as keyword
       categoryKeywords[cat.id] = [cat.name.toLowerCase()];
     }
-    // Add plan keywords if available
     if (plan) {
       for (const planCat of plan.categories) {
         if (categoryKeywords[planCat.id]) {
@@ -335,7 +471,6 @@ ${budgetContext}`,
       }
     }
 
-    // Fallback hardcoded keywords for common categories
     const fallbackKeywords: Record<string, string[]> = {
       coffee: ['coffee', 'latte', 'cappuccino', 'espresso', 'flat white', 'mocha', 'cafe', 'starbucks', 'costa'],
       food: ['food', 'lunch', 'dinner', 'breakfast', 'meal', 'pizza', 'burger', 'sushi', 'groceries', 'pret', 'eat', 'ate'],
@@ -365,68 +500,45 @@ ${budgetContext}`,
     }
 
     if (amount && detectedCategory) {
-      const executedFunctions: FunctionCallResult[] = [];
-      let totalXP = 0;
-      let lessonResult: AIResult['lesson'] = null;
-      let responseText = '';
+      // Defer for confirmation instead of executing immediately
+      const budgetCat = await getBudgetCategory(detectedCategory);
+      const catName = categories.find(c => c.id === detectedCategory)?.name || detectedCategory;
+      const description = userText.replace(/[0-9.,£$]+/g, '').trim() || detectedCategory;
 
-      const logResult = await executeFunctionCall({
-        name: 'log_transaction',
-        arguments: { category: detectedCategory, amount, description: userText.replace(/[0-9.,£$]+/g, '').trim() || detectedCategory },
-      });
-      executedFunctions.push(logResult);
-      totalXP += logResult.xpEarned;
-      responseText = logResult.responseText || '';
-
-      if (logResult.success) {
-        const budgetResult = await executeFunctionCall({
-          name: 'check_budget_status',
-          arguments: { category: detectedCategory },
-        });
-        executedFunctions.push(budgetResult);
-
-        const budgetData = budgetResult.data as { exceeded?: boolean; percentage?: number } | undefined;
-        if (budgetData?.exceeded) {
-          const lessonFnResult = await executeFunctionCall({
-            name: 'get_micro_lesson',
-            arguments: { trigger_type: 'budget_exceeded', category: detectedCategory, severity: 'mild' },
-          });
-          executedFunctions.push(lessonFnResult);
-          totalXP += lessonFnResult.xpEarned;
-          if (lessonFnResult.lesson) {
-            lessonResult = lessonFnResult.lesson;
-          }
-        }
-      }
+      const pending: PendingTransaction = {
+        amount,
+        category: detectedCategory,
+        categoryName: catName,
+        description,
+        budgetSpent: budgetCat?.spent ?? 0,
+        budgetLimit: budgetCat?.weekly_limit ?? 0,
+      };
+      conversationContext.startConfirmation(pending);
 
       return {
-        responseText,
-        executedFunctions,
-        lesson: lessonResult,
-        xpEarned: totalXP,
-        navigateTo: null,
+        responseText: '',
+        executedFunctions: [],
+        lesson: null,
+        xpEarned: 0,
+        contentType: 'confirmation',
+        pendingTransaction: pending,
       };
     }
 
     return {
-      responseText: "I couldn't quite understand that. Try something like \"spent 5 quid on coffee\" or \"show my budget\".",
+      responseText: "I couldn't quite understand that. Try saying \"spent 5 on coffee\", \"how's my budget\", or \"help\".",
       executedFunctions: [],
       lesson: null,
       xpEarned: 0,
-      navigateTo: null,
     };
   }
 
   async destroy(): Promise<void> {
-    // --- HuggingFace API: nothing to tear down ---
-    this.isInitialized = false;
-
-    // --- Cactus on-device teardown (commented out) ---
-    // if (this.model) {
-    //   await this.model.destroy();
-    //   this.model = null;
-    //   this.isInitialized = false;
-    // }
+    if (this.model) {
+      await this.model.destroy();
+      this.model = null;
+      this.isInitialized = false;
+    }
   }
 }
 

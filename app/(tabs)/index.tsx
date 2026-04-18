@@ -1,65 +1,107 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+// Voice-first single-page layout — all interactions through pet terminal
+import { useState, useCallback, useReducer, useEffect, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
+  Pressable,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, router } from 'expo-router';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
-import ChatInput from '../../components/ChatInput';
-import ConfirmationBanner from '../../components/ConfirmationBanner';
-import type { BannerType } from '../../components/ConfirmationBanner';
+import PetTerminal from '../../components/pet/PetTerminal';
+import SpeechBubble from '../../components/pet/SpeechBubble';
+import SuggestionChips from '../../components/MenuChips';
+import VoiceControl from '../../components/VoiceControl';
+import DynamicContentArea, { type ContentState } from '../../components/DynamicContentArea';
 import MicroLessonModal from '../../components/MicroLessonModal';
 import XPPopup from '../../components/XPPopup';
-import ModeToggle from '../../components/ModeToggle';
-import VoiceInput from '../../components/VoiceInput';
-import MenuChips from '../../components/MenuChips';
+import type { CategoryDetailCardData } from '../../components/cards/CategoryDetailCard';
 import {
   getUserProfile,
+  getPetProfile,
+  getPetHealth,
   createChallenge,
   updateUserXP,
+  getBudgetCategories,
+  getRecentTransactions,
+  getActiveChallenges,
   type UserProfile,
+  type PetProfile,
 } from '../../services/database';
-import { aiService, type AIResult } from '../../services/ai';
-import { XP_AWARDS, getXPForNextLevel, getLevelTitle } from '../../utils/gamification';
-import { Colors, Spacing, FontSize, BorderRadius } from '../../constants/theme';
-import { getBudgetState } from '../../utils/budgetState';
+import { aiService, type AIResult, type PendingTransaction } from '../../services/ai';
+import { conversationContext } from '../../services/conversationContext';
+import { executeFunctionCall } from '../../services/functionExecutor';
+import { recalculatePetState, getCurrentPetState, type PetMood } from '../../services/petState';
+import { recordEngagement } from '../../services/engagement';
+import { checkEvolution } from '../../services/petEvolution';
+import { getTransactionReaction, getDailyCheckInReaction } from '../../services/petReactions';
+import { resolveDialogue } from '../../services/petDialogue';
+import { playFullPetFeedback, speakQuestOffer, stopAllAudio } from '../../services/audioFeedback';
+import { playShakeDetectedHaptic } from '../../services/haptics';
+import { XP_AWARDS } from '../../utils/gamification';
 import { announceForScreenReader } from '../../utils/accessibility';
-import { announceScreen, playFullBudgetFeedback } from '../../services/audioFeedback';
-import { getBudgetCategories } from '../../services/database';
-import * as Speech from 'expo-speech';
+import { buildContentSpeech } from '../../utils/contentSpeech';
+import { getSuggestionChips, type ChipState } from '../../utils/suggestionChips';
+import { useShakeDetector } from '../../hooks/useShakeDetector';
+import { useTheme } from '../../theme';
 
-type InputMode = 'voice' | 'text';
+// Content state reducer
+type ContentAction =
+  | { type: 'SET_CONTENT'; payload: ContentState }
+  | { type: 'CLEAR' };
+
+function contentReducer(state: ContentState | null, action: ContentAction): ContentState | null {
+  switch (action.type) {
+    case 'SET_CONTENT':
+      return action.payload;
+    case 'CLEAR':
+      return null;
+    default:
+      return state;
+  }
+}
 
 export default function HomeScreen() {
+  const theme = useTheme();
+
+  // Core state
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [petProfile, setPetProfile] = useState<PetProfile | null>(null);
+  const [petState, setPetState] = useState<PetMood>('neutral');
+  const [dialogue, setDialogue] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isModelReady, setIsModelReady] = useState(false);
-  const [modelLoadProgress, setModelLoadProgress] = useState(0);
-  const [inputMode, setInputMode] = useState<InputMode>('voice');
-  const inputModeRef = useRef<InputMode>('voice');
+  const [healthPoints, setHealthPoints] = useState(100);
 
-  const handleModeChange = useCallback((mode: InputMode) => {
-    Speech.stop();
-    setInputMode(mode);
-    inputModeRef.current = mode;
-  }, []);
+  // Dynamic content
+  const [contentState, dispatchContent] = useReducer(contentReducer, null);
 
-  // Banner
-  const [banner, setBanner] = useState<{
-    message: string;
-    type: BannerType;
-    visible: boolean;
-  }>({ message: '', type: 'info', visible: false });
+  // Suggestion chips
+  const [chips, setChips] = useState<string[]>(["how's my budget?", 'log spending', 'what can I do?']);
 
-  // Lesson modal
+  // Shake-to-talk
+  const [shakeTrigger, setShakeTrigger] = useState(0);
+  useShakeDetector({
+    onShake: () => {
+      playShakeDetectedHaptic();
+      setShakeTrigger((n) => n + 1);
+    },
+    enabled: !isProcessing,
+  });
+
+  // Conversational auto-mic after TTS
+  const [ttsTrigger, setTTSTrigger] = useState(0);
+  const voiceInteractionActive = useRef(false);
+
+  // Lesson modal (kept as modal for now)
   const [showLesson, setShowLesson] = useState(false);
   const [currentLesson, setCurrentLesson] = useState<AIResult['lesson']>(null);
+  const [lessonActionPending, setLessonActionPending] = useState<'accept' | 'dismiss' | null>(null);
+  const lessonOfferTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // XP popup
   const [xpPopup, setXpPopup] = useState<{ amount: number; visible: boolean }>({
@@ -67,262 +109,464 @@ export default function HomeScreen() {
     visible: false,
   });
 
-  const scrollRef = useRef<ScrollView>(null);
+  const handleTTSDone = useCallback(() => {
+    if (voiceInteractionActive.current && !isProcessing) {
+      setTTSTrigger((n) => n + 1);
+    }
+  }, [isProcessing]);
 
-  useEffect(() => {
-    const keyboardListener = Keyboard.addListener('keyboardDidShow', () => {
-      scrollRef.current?.scrollToEnd({ animated: true });
-    });
-    return () => keyboardListener.remove();
-  }, []);
+  const presentLessonOffer = useCallback((lesson: NonNullable<AIResult['lesson']>, delay = 0) => {
+    if (lessonOfferTimeoutRef.current) {
+      clearTimeout(lessonOfferTimeoutRef.current);
+      lessonOfferTimeoutRef.current = null;
+    }
 
-  const loadProfile = useCallback(async () => {
-    const p = await getUserProfile();
+    lessonOfferTimeoutRef.current = setTimeout(() => {
+      lessonOfferTimeoutRef.current = null;
+
+      void (async () => {
+        const activeChallenges = await getActiveChallenges();
+        if (activeChallenges.length > 0) {
+          return;
+        }
+
+        setCurrentLesson(lesson);
+        setShowLesson(true);
+        conversationContext.startLessonOffer();
+        announceForScreenReader(`New quest. ${lesson.challengeTemplate.title}.`);
+        speakQuestOffer(lesson, handleTTSDone);
+      })();
+    }, delay);
+  }, [handleTTSDone]);
+
+  const loadData = useCallback(async () => {
+    const [p, pet, hp] = await Promise.all([
+      getUserProfile(),
+      getPetProfile(),
+      getPetHealth(),
+    ]);
     setProfile(p);
+    setPetProfile(pet);
+    setHealthPoints(hp);
+    if (pet) {
+      setPetState(pet.current_state as PetMood);
+    }
+
+    // Update suggestion chips
+    try {
+      const cats = await getBudgetCategories();
+      const txns = await getRecentTransactions(1);
+      const active = await getActiveChallenges();
+      const today = new Date().toDateString();
+      const hasToday = txns.length > 0 && new Date(txns[0].timestamp).toDateString() === today;
+      const tight = cats
+        .filter((c) => c.weekly_limit > 0 && c.spent / c.weekly_limit > 0.8)
+        .map((c) => c.name);
+
+      const chipState: ChipState = {
+        hasTransactionsToday: hasToday,
+        tightCategories: tight,
+        hasActiveQuest: active.length > 0,
+        petName: pet?.name ?? 'Buddy',
+      };
+      setChips(getSuggestionChips(chipState));
+    } catch {}
   }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadProfile();
-      announceScreen('Home', 'Log expenses by voice or text');
-    }, [loadProfile])
-  );
+  useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
 
   // Init AI on first mount
-  useFocusEffect(
-    useCallback(() => {
-      let mounted = true;
-      if (!aiService.getInitStatus()) {
-        aiService
-          .init((progress) => {
-            if (mounted) setModelLoadProgress(progress);
-          })
-          .then(() => {
-            if (mounted) setIsModelReady(true);
-          })
-          .catch(() => {
-            if (mounted) setIsModelReady(true);
-          });
+  useEffect(() => {
+    let mounted = true;
+    if (!aiService.getInitStatus()) {
+      aiService
+        .init()
+        .then(() => { if (mounted) setIsModelReady(true); })
+        .catch(() => { if (mounted) setIsModelReady(true); });
+    } else {
+      setIsModelReady(true);
+    }
 
-        aiService.checkTimeTriggers().then((result) => {
-          if (mounted && result?.lesson) {
-            setCurrentLesson(result.lesson);
-            setTimeout(() => setShowLesson(true), 1000);
+    // Daily check-in with contextual hint
+    (async () => {
+      try {
+        const state = await getCurrentPetState();
+        const reaction = getDailyCheckInReaction(state);
+        let text = await resolveDialogue(reaction.templateKey, reaction.slotValues);
+
+        // Append contextual suggestion for discoverability
+        const cats = await getBudgetCategories();
+        const active = await getActiveChallenges();
+        const txns = await getRecentTransactions(1);
+        const today = new Date().toDateString();
+        const hasToday = txns.length > 0 && new Date(txns[0].timestamp).toDateString() === today;
+
+        if (!hasToday) {
+          text += " Tell me what you've spent today!";
+        } else if (active.length > 0) {
+          text += ' Ask me about your quest progress!';
+        } else {
+          const tight = cats.find((c) => c.weekly_limit > 0 && c.spent / c.weekly_limit > 0.8);
+          if (tight) {
+            text += ` Try saying "check ${tight.id} budget"`;
           }
-        }).catch(() => {});
-      } else {
-        setIsModelReady(true);
+        }
+
+        if (mounted) setDialogue(text);
+      } catch {}
+    })();
+
+    // Check time-based triggers
+    aiService.checkTimeTriggers().then((result) => {
+      if (mounted && result?.lesson) {
+        presentLessonOffer(result.lesson, 1500);
       }
-      return () => { mounted = false; };
-    }, [])
-  );
+    }).catch(() => {});
 
-  const speak = useCallback((text: string) => {
-    if (inputModeRef.current !== 'voice') return;
-    Speech.stop();
-    Speech.speak(text, { language: 'en-US', rate: 0.95 });
-  }, []);
+    // Check evolution
+    checkEvolution().catch(() => {});
 
-  const showBanner = (message: string, type: BannerType) => {
-    setBanner({ message, type, visible: true });
-    speak(message);
-  };
+    return () => {
+      mounted = false;
+      if (lessonOfferTimeoutRef.current) {
+        clearTimeout(lessonOfferTimeoutRef.current);
+        lessonOfferTimeoutRef.current = null;
+      }
+    };
+  }, [presentLessonOffer]);
 
   const showXPPopup = (amount: number) => {
     setXpPopup({ amount, visible: true });
-    announceForScreenReader(`Earned ${amount} experience points`);
+    announceForScreenReader(`Earned ${amount} care points`);
     setTimeout(() => setXpPopup({ amount: 0, visible: false }), 1500);
   };
 
   const handleSend = async (text: string) => {
     setIsProcessing(true);
 
-    // Voice mode: confirm what was heard
-    if (inputModeRef.current === 'voice') {
-      Speech.stop();
-      Speech.speak(`Processing: ${text}`, { language: 'en-US', rate: 1.0 });
-    }
-
     try {
-      const result = await aiService.processUserInput(text);
+      const result = await aiService.parseUserInput(text);
+      let nextContentState: ContentState | null = null;
 
-      // Handle navigation
-      if (result.navigateTo) {
-        const routeMap: Record<string, string> = {
-          budget: '/budget',
-          lessons: '/lessons',
-          challenges: '/challenges',
-          home: '/',
-          'how-it-works': '/how-it-works',
-        };
-        const route = routeMap[result.navigateTo];
-        if (route && route !== '/') {
-          router.navigate(route as '/budget' | '/lessons' | '/challenges' | '/how-it-works');
-        }
+      // Handle lesson accept/dismiss from voice
+      if (result.lessonAction) {
+        await handleLessonOfferAction(result.lessonAction);
+        return;
+      }
+
+      // Handle settings navigation
+      if (result.executedFunctions[0]?.functionName === 'open_settings') {
+        router.push('/settings/profile' as any);
         setIsProcessing(false);
         return;
       }
 
-      // Refresh profile after processing
-      await loadProfile();
+      // If conversation context intercepted and wants to execute a transaction
+      if (result.pendingTransaction && result.contentType !== 'confirmation') {
+        // This means the context said "execute" — run confirmed transaction
+        await executeTransaction(result.pendingTransaction);
+        return;
+      }
 
-      const hasExceeded = result.executedFunctions.some(
-        (f) => f.functionName === 'check_budget_status' && (f.data as { exceeded?: boolean })?.exceeded
-      );
-      const bannerType: BannerType = hasExceeded ? 'warning' : result.executedFunctions.length > 0 ? 'success' : 'info';
-
-      // Trigger multi-sensory budget feedback after a transaction
-      const hasTransaction = result.executedFunctions.some((f) => f.functionName === 'log_transaction');
-      if (hasTransaction) {
-        try {
-          const cats = await getBudgetCategories();
-          const totalSpent = cats.reduce((sum, c) => sum + c.spent, 0);
-          const totalLimit = cats.reduce((sum, c) => sum + c.weekly_limit, 0);
-          const state = getBudgetState(totalSpent, totalLimit);
-          playFullBudgetFeedback(state, totalSpent, totalLimit);
-        } catch {
-          // Non-critical — don't block UI
+      // Show content card if applicable
+      if (result.contentType && result.contentType !== 'idle') {
+        nextContentState = {
+          type: result.contentType,
+          data: result.executedFunctions[0]?.data ?? result.pendingTransaction ?? {},
+          responseText: result.responseText,
+        };
+        dispatchContent({ type: 'SET_CONTENT', payload: nextContentState });
+      } else if (result.contentType === 'idle' || (!result.contentType && !result.pendingTransaction)) {
+        // Clear content on idle or generic response
+        if (!result.pendingTransaction) {
+          dispatchContent({ type: 'CLEAR' });
         }
       }
 
-      showBanner(result.responseText, bannerType);
+      // If pending transaction (confirmation flow), show the confirmation card
+      if (result.pendingTransaction && result.contentType === 'confirmation') {
+        const p = result.pendingTransaction;
+        const projected = p.budgetLimit > 0
+          ? Math.round(((p.budgetSpent + p.amount) / p.budgetLimit) * 100)
+          : 0;
+        nextContentState = {
+          type: 'confirmation',
+          data: result.pendingTransaction,
+          responseText: `\u00A3${p.amount.toFixed(2)} on ${p.categoryName}. That'll put you at ${projected}% for the week. Say yes to confirm or no to cancel.`,
+        };
+        dispatchContent({ type: 'SET_CONTENT', payload: nextContentState });
+      }
+
+      const spokenSummary = nextContentState ? buildContentSpeech(nextContentState) : null;
+
+      if (spokenSummary) {
+        setDialogue(spokenSummary);
+      } else if (result.responseText && !result.pendingTransaction) {
+        setDialogue(result.responseText);
+      }
 
       if (result.xpEarned > 0) {
         showXPPopup(result.xpEarned);
       }
 
       if (result.lesson) {
-        setCurrentLesson(result.lesson);
-        setTimeout(() => setShowLesson(true), 800);
+        presentLessonOffer(result.lesson, 800);
       }
     } catch {
-      showBanner("Something went wrong. Try again!", 'error');
+      setDialogue("Hmm, something went wrong. Try again!");
+    } finally {
+      setIsProcessing(false);
+      loadData(); // Refresh chips + state
+    }
+  };
+
+  const handleVoiceSend = async (text: string) => {
+    voiceInteractionActive.current = true;
+    await handleSend(text);
+  };
+
+  const executeTransaction = async (pending: PendingTransaction) => {
+    try {
+      const result = await aiService.executeConfirmedTransaction(pending);
+      let nextContentState: ContentState | null = null;
+
+      await recordEngagement('transaction_log');
+      await loadData();
+
+      // Recalculate pet state
+      const stateResult = await recalculatePetState('transaction');
+      setPetState(stateResult.newState);
+      setHealthPoints(stateResult.newHealth);
+
+      if (stateResult.stateChanged && petProfile) {
+        playFullPetFeedback(stateResult.newState, petProfile.name);
+      }
+
+      // Pet reaction dialogue
+      const logFn = result.executedFunctions.find(f => f.functionName === 'log_transaction');
+      if (logFn?.success) {
+        const data = logFn.data as { percentage?: number; budgetStatus?: { spent: number; weekly_limit: number } } | undefined;
+        const percentage = data?.percentage ?? 0;
+        const budgetStatus = data?.budgetStatus;
+        const remaining = budgetStatus ? budgetStatus.weekly_limit - budgetStatus.spent : 0;
+        const category = (logFn.params as Record<string, unknown>).category as string;
+        const amount = (logFn.params as Record<string, unknown>).amount as number;
+
+        const reaction = getTransactionReaction(category, amount, remaining, percentage);
+        const dialogueText = await resolveDialogue(reaction.templateKey, reaction.slotValues);
+        setDialogue(dialogueText);
+      }
+
+      if (result.xpEarned > 0) {
+        showXPPopup(result.xpEarned);
+      }
+
+      if (result.lesson) {
+        presentLessonOffer(result.lesson, 800);
+      }
+
+      // Show game card if triggered
+      if (result.game) {
+        nextContentState = {
+          type: result.game === 'needs_vs_wants' ? 'game_needs_vs_wants' : 'game_bnpl',
+          data: {},
+          responseText: result.game === 'needs_vs_wants'
+            ? "I've noticed a few fun purchases lately. Let's play a quick game! Say 'start' when ready."
+            : "I've spotted some BNPL purchases. Let me show you something interesting. Say 'start' when ready.",
+        };
+        dispatchContent({ type: 'SET_CONTENT', payload: nextContentState });
+      } else {
+        // Clear confirmation card after successful transaction
+        dispatchContent({ type: 'CLEAR' });
+      }
+
+      const spokenSummary = nextContentState ? buildContentSpeech(nextContentState) : null;
+      if (spokenSummary) {
+        setDialogue(spokenSummary);
+      }
+    } catch {
+      setDialogue("Something went wrong logging that. Try again!");
     } finally {
       setIsProcessing(false);
     }
   };
 
-  const handleAcceptChallenge = async () => {
-    if (!currentLesson?.challengeTemplate) return;
+  const handleLessonOfferAction = useCallback(async (action: 'accept' | 'dismiss') => {
+    if (lessonActionPending) return;
 
-    const template = currentLesson.challengeTemplate;
-    await createChallenge({
-      title: template.title,
-      description: template.description,
-      type: template.type,
-      category: currentLesson.triggerType === 'budget_exceeded' ? 'coffee' : 'general',
-      duration_days: template.duration_days,
-      xp_reward: template.xp_reward,
-    });
+    const lesson = currentLesson;
+    setLessonActionPending(action);
+    stopAllAudio();
+    if (lessonOfferTimeoutRef.current) {
+      clearTimeout(lessonOfferTimeoutRef.current);
+      lessonOfferTimeoutRef.current = null;
+    }
 
-    await updateUserXP(XP_AWARDS.ACCEPT_CHALLENGE);
-    showXPPopup(XP_AWARDS.ACCEPT_CHALLENGE);
-    setShowLesson(false);
-    showBanner(
-      `Challenge accepted! "${template.title}" — ${template.duration_days} days for +${template.xp_reward} XP`,
-      'success'
-    );
-  };
+    try {
+      conversationContext.reset();
+      setShowLesson(false);
+      setCurrentLesson(null);
 
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+      if (action === 'dismiss') {
+        setDialogue('No worries, maybe next time!');
+        return;
+      }
 
-  const xpInfo = profile ? getXPForNextLevel(profile.xp) : null;
+      if (!lesson?.challengeTemplate) {
+        setDialogue('There is no quest to accept right now.');
+        return;
+      }
+
+      const activeChallenges = await getActiveChallenges();
+      if (activeChallenges.length > 0) {
+        setDialogue(`You already have an active quest: "${activeChallenges[0].title}". Finish it first!`);
+        return;
+      }
+
+      const template = lesson.challengeTemplate;
+      const challengeCategory = lesson.sourceCategory ?? lesson.category ?? 'general';
+
+      await createChallenge({
+        title: template.title,
+        description: template.description,
+        type: template.type,
+        category: challengeCategory,
+        duration_days: template.duration_days,
+        xp_reward: template.xp_reward,
+      });
+      await updateUserXP(XP_AWARDS.ACCEPT_CHALLENGE);
+      showXPPopup(XP_AWARDS.ACCEPT_CHALLENGE);
+      setDialogue(`Challenge accepted! "${template.title}" — let's do this!`);
+    } catch {
+      setDialogue(action === 'accept' ? 'Failed to start that quest. Try again.' : 'Something went wrong. Try again.');
+    } finally {
+      setLessonActionPending(null);
+      await loadData();
+    }
+  }, [currentLesson, lessonActionPending, loadData]);
+
+  const handleAdjustCategoryLimit = useCallback(async (categoryId: string, delta: number) => {
+    setIsProcessing(true);
+
+    try {
+      const result = await executeFunctionCall({
+        name: 'adjust_budget_limit',
+        arguments: {
+          category: categoryId,
+          direction: delta > 0 ? 'increase' : 'decrease',
+          amount: Math.abs(delta),
+        },
+      });
+
+      let nextContentState: ContentState | null = null;
+      if (result.success && result.contentType === 'category_detail' && result.data) {
+        nextContentState = {
+          type: 'category_detail',
+          data: result.data as CategoryDetailCardData,
+          responseText: result.responseText || '',
+        };
+        dispatchContent({ type: 'SET_CONTENT', payload: nextContentState });
+      }
+
+      const fallbackResponseText = result.responseText || 'Budget updated.';
+      const spokenSummary = buildContentSpeech(nextContentState ?? {
+        type: 'category_detail',
+        data: result.data,
+        responseText: fallbackResponseText,
+      });
+      setDialogue(spokenSummary ?? fallbackResponseText);
+    } catch {
+      setDialogue('Something went wrong updating that budget. Try again.');
+    } finally {
+      setIsProcessing(false);
+      await loadData();
+    }
+  }, [loadData]);
+
+  const petName = petProfile?.name ?? 'Buddy';
+  const showChips = !contentState; // Hide chips when content card is showing
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.colors.base.background }]} edges={['top', 'bottom']}>
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        {/* Scrollable content area */}
         <ScrollView
-          ref={scrollRef}
-          contentContainerStyle={styles.container}
+          contentContainerStyle={[styles.scrollContent, { padding: theme.spacing.lg }]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* 1. Title block */}
-          <Animated.View entering={FadeIn.duration(600)} style={styles.titleBlock}>
-            <Text style={styles.appTitle} accessibilityRole="header">MICRO{'\n'}LESSONS</Text>
-            <View style={styles.titleDivider} />
-            {!isModelReady && (
-              <Text style={styles.loadingText}>
-                Loading AI... {Math.round(modelLoadProgress * 100)}%
-              </Text>
-            )}
-          </Animated.View>
+          {/* Settings gear */}
+          <Pressable
+            style={styles.settingsButton}
+            onPress={() => router.push('/settings/profile' as any)}
+            accessibilityLabel="Settings"
+            accessibilityRole="button"
+          >
+            <Text style={[styles.settingsIcon, { color: theme.colors.base.textSecondary }]}>
+              {'[=]'}
+            </Text>
+          </Pressable>
 
-          {/* 2. Greeting */}
-          <Text style={styles.greeting}>
-            {greeting}, {profile?.name ?? 'there'}
-          </Text>
-
-          {/* 3. Voice/Text Toggle — hero element */}
-          <Animated.View entering={FadeInDown.delay(100).duration(400)}>
-            <ModeToggle mode={inputMode} onModeChange={handleModeChange} />
-          </Animated.View>
-
-          {/* 4. Input Area — conditional */}
-          <Animated.View entering={FadeInDown.delay(200).duration(400)}>
-            {inputMode === 'voice' ? (
-              <VoiceInput
-                onTranscript={handleSend}
-                isProcessing={isProcessing}
-              />
-            ) : (
-              <ChatInput
-                onSend={handleSend}
-                isProcessing={isProcessing}
-                embedded
-                prominent
-              />
-            )}
-          </Animated.View>
-
-          {/* 5. Confirmation Banner */}
-          <ConfirmationBanner
-            message={banner.message}
-            type={banner.type}
-            visible={banner.visible}
-            onDismiss={() => setBanner((b) => ({ ...b, visible: false }))}
-          />
-
-          {/* 6. Menu Chips */}
-          <Animated.View entering={FadeInDown.delay(300).duration(400)}>
-            <MenuChips />
-          </Animated.View>
-
-          {/* 7. Level/XP/Streak Row */}
-          {profile && (
-            <View
-              style={styles.levelRow}
-              accessible={true}
-              accessibilityLabel={`Level ${profile.level}${xpInfo ? `, ${xpInfo.current} of ${xpInfo.needed} experience points` : ''}${profile.streak_days > 0 ? `, ${profile.streak_days} day streak` : ''}`}
-            >
-              <View style={styles.levelPill}>
-                <Text style={styles.levelText}>Lv {profile.level}</Text>
-              </View>
-              {xpInfo && (
-                <Text style={styles.xpText}>
-                  {xpInfo.current}/{xpInfo.needed} XP
-                </Text>
-              )}
-              {profile.streak_days > 0 && (
-                <Text style={styles.streakText} importantForAccessibility="no">🔥 {profile.streak_days}</Text>
-              )}
-            </View>
+          {/* AI loading indicator */}
+          {!isModelReady && (
+            <Text style={[styles.loadingText, { color: theme.colors.base.textSecondary }]}>
+              Loading AI...
+            </Text>
           )}
+
+          {/* Pet Terminal */}
+          <Animated.View entering={FadeIn.duration(600)}>
+            <PetTerminal petState={petState} petName={petName} healthPoints={healthPoints} />
+          </Animated.View>
+
+          {/* Speech Bubble */}
+          {dialogue ? (
+            <Animated.View entering={FadeInDown.delay(200).duration(400)}>
+              <SpeechBubble
+                message={dialogue}
+                onTTSDone={handleTTSDone}
+                autoSpeak={!showLesson && !currentLesson}
+              />
+            </Animated.View>
+          ) : null}
+
+          {/* Suggestion Chips — only when no content card */}
+          {showChips && (
+            <Animated.View entering={FadeInDown.delay(300).duration(400)}>
+              <SuggestionChips
+                chips={chips}
+                onChipPress={handleSend}
+                disabled={isProcessing}
+              />
+            </Animated.View>
+          )}
+
+          {/* Dynamic Content Area */}
+          <DynamicContentArea
+            contentState={contentState}
+            onAdjustCategoryLimit={handleAdjustCategoryLimit}
+          />
         </ScrollView>
+
+        {/* Fixed Footer — Voice/Text Control */}
+        <VoiceControl
+          onSend={handleVoiceSend}
+          isProcessing={isProcessing}
+          shakeTrigger={shakeTrigger}
+          ttsTrigger={ttsTrigger}
+          onModeChange={(m) => { if (m === 'text') voiceInteractionActive.current = false; }}
+        />
 
         {/* XP Popup */}
         <XPPopup amount={xpPopup.amount} visible={xpPopup.visible} />
 
-        {/* Micro Lesson Modal */}
+        {/* Lesson Modal (kept as modal for now) */}
         <MicroLessonModal
           visible={showLesson}
           lesson={currentLesson}
-          onAcceptChallenge={handleAcceptChallenge}
-          onDismiss={() => setShowLesson(false)}
+          pendingAction={lessonActionPending}
+          onAcceptChallenge={() => { void handleLessonOfferAction('accept'); }}
+          onDismiss={() => { void handleLessonOfferAction('dismiss'); }}
         />
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -330,71 +574,20 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-  flex: {
-    flex: 1,
-  },
-  container: {
+  safeArea: { flex: 1 },
+  flex: { flex: 1 },
+  scrollContent: {
     flexGrow: 1,
-    justifyContent: 'center',
-    paddingHorizontal: Spacing.xxl,
-    gap: Spacing.lg,
+    gap: 16,
   },
-  titleBlock: {
-    alignItems: 'center',
-    marginBottom: Spacing.sm,
-  },
-  appTitle: {
-    fontSize: 26,
-    fontWeight: '300',
-    letterSpacing: 8,
-    color: Colors.text,
-    textAlign: 'center',
-    lineHeight: 34,
-  },
-  titleDivider: {
-    width: 40,
-    height: 2,
-    backgroundColor: Colors.primary,
-    marginTop: Spacing.md,
-    borderRadius: 1,
-  },
-  loadingText: {
-    fontSize: FontSize.xs,
-    color: Colors.warning,
-    marginTop: Spacing.sm,
-  },
-  greeting: {
-    fontSize: FontSize.body,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-  },
-  levelRow: {
-    flexDirection: 'row',
+  settingsButton: {
+    alignSelf: 'flex-end',
+    padding: 8,
+    minWidth: 48,
+    minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: Spacing.md,
-    marginTop: Spacing.sm,
   },
-  levelPill: {
-    backgroundColor: Colors.levelPurple,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.full,
-  },
-  levelText: {
-    fontSize: FontSize.xs,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  xpText: {
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-  },
-  streakText: {
-    fontSize: FontSize.sm,
-  },
+  settingsIcon: { fontSize: 18, fontWeight: '600' },
+  loadingText: { textAlign: 'center', fontSize: 14 },
 });

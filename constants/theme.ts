@@ -80,24 +80,31 @@ export const CategoryColors: Record<string, { bg: string; icon: string }> = {
 
 // Fallback category icons — primary source is DB budget_categories table
 export const CategoryIcons: Record<string, string> = {
-  coffee: '☕',
-  food: '🍕',
-  transport: '🚌',
-  entertainment: '🎬',
-  groceries: '🛒',
-  dining: '🍽️',
-  personal: '🛍️',
-  fun: '🎉',
-  savings: '🛡️',
-  social: '🎭',
-  shopping: '🛍️',
-  health: '💪',
-  subscriptions: '📱',
-  essentials: '🏠',
-  discretionary: '🎯',
-  needs: '🛒',
-  wants: '✨',
-  other: '📦',
+  coffee: 'CAFE',
+  food: 'FOOD',
+  transport: 'RIDE',
+  entertainment: 'PLAY',
+  groceries: 'CART',
+  dining: 'MEAL',
+  personal: 'CARE',
+  fun: 'FUN',
+  savings: 'SAVE',
+  social: 'SOC',
+  shopping: 'SHOP',
+  health: 'WELL',
+  subscriptions: 'SUBS',
+  essentials: 'HOME',
+  discretionary: 'FLEX',
+  needs: 'NEED',
+  wants: 'WANT',
+  other: 'MISC',
+  'goal-fund': 'GOAL',
+  buffer: 'BUFF',
+  impulse: 'FAST',
+  'rainy-day': 'RAIN',
+  wellbeing: 'CALM',
+  growth: 'GROW',
+  flex: 'FLEX',
 };
 
 export function getCategoryColor(id: string, dbColor?: string): { bg: string; icon: string } {
@@ -109,5 +116,5 @@ export function getCategoryColor(id: string, dbColor?: string): { bg: string; ic
 }
 
 export function getCategoryIcon(id: string, dbIcon?: string): string {
-  return dbIcon || CategoryIcons[id] || '📦';
+  return dbIcon || CategoryIcons[id] || 'MISC';
 }

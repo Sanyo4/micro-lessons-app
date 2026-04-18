@@ -1,4 +1,5 @@
 import * as Speech from 'expo-speech';
+import type { MicroLesson } from '../data/lessons';
 import type { BudgetState } from '../utils/budgetState';
 import { playBudgetHaptic } from './haptics';
 import { playBudgetTone } from './tonalAudio';
@@ -86,4 +87,93 @@ export async function playFullBudgetFeedback(
 
   // 3. TTS announcement
   await speakBudgetState(state, spent, limit);
+}
+
+// === Pet State Multi-Sensory Feedback (Brief 02) ===
+import type { PetMood } from './petState';
+import { playPetHaptic } from './haptics';
+import { playPetTone } from './tonalAudio';
+
+const PET_TTS_MESSAGES: Record<PetMood, (name: string) => string> = {
+  thriving: (n) => `${n} is now thriving! Your budget is looking great.`,
+  happy: (n) => `${n} is now happy. You're doing well.`,
+  neutral: (n) => `${n} is feeling okay. Keep going!`,
+  worried: (n) => `${n} is worried. Some of your spending categories are getting tight.`,
+  critical: (n) => `${n} is not doing well. Your budget needs attention.`,
+};
+
+/**
+ * Coordinated multi-sensory pet state feedback:
+ * 1. Haptic fires first
+ * 2. Tonal cue plays
+ * 3. TTS announces state transition
+ */
+export async function playFullPetFeedback(
+  state: PetMood,
+  petName: string,
+): Promise<void> {
+  // 1. Haptic
+  playPetHaptic(state);
+
+  // 2. Tonal cue
+  await playPetTone(state);
+
+  // Small gap
+  await new Promise((r) => setTimeout(r, 300));
+
+  // 3. TTS
+  const isSpeaking = await Speech.isSpeakingAsync();
+  if (!isSpeaking) {
+    Speech.speak(PET_TTS_MESSAGES[state](petName), {
+      language: 'en-US',
+      rate: 0.9,
+    });
+  }
+}
+
+// === Voice-First Helpers ===
+
+/**
+ * Stop all audio output immediately — used when mic is pressed.
+ */
+export function stopAllAudio(): void {
+  Speech.stop();
+}
+
+/**
+ * Speak a function result with appropriate rate/pitch.
+ */
+export function speakFunctionResult(responseText: string): void {
+  if (!responseText) return;
+  Speech.speak(responseText, {
+    language: 'en-US',
+    rate: 0.9,
+    pitch: 1.0,
+  });
+}
+
+export function speakQuestOffer(
+  lesson: MicroLesson,
+  onDone?: () => void,
+): void {
+  const template = lesson.challengeTemplate;
+  const message = [
+    'New quest.',
+    `${template.title}.`,
+    template.description,
+    lesson.insight ? `Why it matters: ${lesson.insight}.` : '',
+    `Reward ${template.xp_reward} care points.`,
+    'Say accept quest to start, or say maybe later to skip.',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  Speech.stop();
+  Speech.speak(message, {
+    language: 'en-US',
+    rate: 0.9,
+    pitch: 1.0,
+    onDone,
+    onStopped: () => {},
+  });
 }

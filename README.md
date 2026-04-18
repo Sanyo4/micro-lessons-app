@@ -12,7 +12,7 @@ Micro Lessons helps users track spending through voice or text, with:
 - **Contextual micro-lessons** — Financial education triggered by real spending patterns
 - **Gamification** — XP, levels, streaks, and challenges to build better habits
 - **PIN-based local auth** — SHA-256 hashed, session-based (PIN every launch)
-- **Personalised onboarding** — 8-screen flow with voice or text input paths
+- **Personalised onboarding** — 11-screen voice-first route with a 9-step progress flow for voice or text budget entry
 - **Privacy by Design** — No cloud, no bank API connections, no external data transmission
 
 ## Architecture
@@ -23,24 +23,25 @@ micro-lessons-app/
 │   ├── _layout.tsx               # Root layout with AuthProvider + auth gate
 │   ├── login.tsx                 # PIN entry screen
 │   ├── (tabs)/                   # Main app (home, budget, challenges, lessons, how-it-works)
-│   └── onboarding/               # 8-screen onboarding flow
+│   └── onboarding/               # Live onboarding flow
 │       ├── _layout.tsx           # Stack nav + OnboardingProvider
-│       ├── welcome.tsx           # Name + input method
-│       ├── motivation.tsx        # Swipeable goal cards
+│       ├── shake-practice.tsx    # Shake-to-talk practice
+│       ├── welcome.tsx           # Pet naming
+│       ├── questions.tsx         # Voice-first goals intake
 │       ├── voice-income.tsx      # Voice: monthly income
 │       ├── voice-bills.tsx       # Voice: regular bills (iterative)
 │       ├── voice-flexible.tsx    # Voice: flexible budget
 │       ├── text-income.tsx       # Text: numpad income entry
-│       ├── text-expenses.tsx     # Text: expense checklist
+│       ├── text-expenses.tsx     # Text: fixed-bill capture
 │       ├── text-spending.tsx     # Text: spending slider
 │       ├── persona.tsx           # Communication style (beginner/learner/pro)
 │       ├── plan.tsx              # Plan selection (scored by goals)
+│       ├── accessibility.tsx     # Accessibility preferences
 │       ├── pin-setup.tsx         # Create + confirm PIN
 │       └── done.tsx              # Summary + write to DB
 ├── components/
 │   ├── NumPad.tsx                # Reusable 3×4 numpad (PIN, income)
-│   ├── OnboardingProgress.tsx    # Step dots + TTS announcement
-│   ├── MotivationCard.tsx        # Swipeable goal selection card
+│   ├── OnboardingProgress.tsx    # Step dots + label
 │   ├── VoiceInput.tsx            # Mic button with pulse rings
 │   ├── BudgetCard.tsx            # Category budget display
 │   └── ...                       # AI response, challenges, lessons, etc.
@@ -211,19 +212,21 @@ The APK will be at `android/app/build/outputs/apk/release/app-release.apk`.
 
 ## Onboarding Flow
 
-8 screens, two parallel paths (voice or text) for financial data entry:
+The live onboarding route is:
 
-| Step | Screen | Voice Path | Text Path |
-|------|--------|-----------|----------|
-| 1 | Welcome | Name + input preference | Same |
-| 2 | Motivation | Swipeable goal cards (5) | Same |
-| 3a | Income | Speak amount | NumPad + frequency toggle |
-| 3b | Bills | Iterative "name + amount, say done" | Checklist with amount fields |
-| 3c | Flexible | Speak amount (auto-calc available) | Slider £0–£1000 |
-| 4 | Persona | Beginner / Learner / Pro | Same |
-| 5 | Plan | 3 plans scored by goals | Same |
-| 6 | PIN Setup | Create + confirm 4-digit PIN | Same |
-| 7 | Done | Summary + write to DB | Same |
+1. `shake-practice` — teach the shake-to-talk gesture
+2. `welcome` — name the pet
+3. `questions` — quick voice-first goals intake
+4. `voice-income` or `text-income`
+5. `voice-bills` or `text-expenses`
+6. `voice-flexible` or `text-spending`
+7. `persona`
+8. `plan`
+9. `accessibility`
+10. `pin-setup`
+11. `done`
+
+`OnboardingProgress` still shows the budget-entry trio as a single shared step, which is why those screens all render as step 4 of 9.
 
 Data is accumulated in-memory via `OnboardingContext` and written to DB only on the final screen via `onboardingWriter.ts`.
 
@@ -289,12 +292,12 @@ Sequence: Haptic fires first (near-instant) → Tonal cue (~1s) → TTS announce
 
 - **WCAG AA contrast** on all text and interactive elements
 - **48px minimum touch targets** on all buttons and inputs
-- **TTS announcements** on screen focus, budget state changes, onboarding steps
+- **TTS announcements** on screen focus, budget state changes, and spoken onboarding prompts
 - **Screen reader support** — `accessibilityRole`, `accessibilityLabel`, `accessibilityState` on all interactive elements
 - **`accessibilityLiveRegion="polite"`** for dynamic content
 - **Extended timeouts** when screen reader is active (10s minimum)
 - **High contrast mode** — primary palette designed for low vision
-- `importantForAccessibility="no"` on decorative emoji
+- `importantForAccessibility="no"` on decorative badges and non-essential status labels
 
 ## Plans & Categories
 

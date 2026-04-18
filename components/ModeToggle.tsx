@@ -60,7 +60,7 @@ export default function ModeToggle({ mode, onModeChange }: ModeToggleProps) {
         accessibilityState={{ selected: mode === 'voice' }}
       >
         <Text style={[styles.icon, mode === 'voice' && styles.activeText]} importantForAccessibility="no">
-          🎙️
+          MIC
         </Text>
         <Text style={[styles.label, mode === 'voice' && styles.activeText]}>
           Voice
@@ -76,7 +76,7 @@ export default function ModeToggle({ mode, onModeChange }: ModeToggleProps) {
         accessibilityState={{ selected: mode === 'text' }}
       >
         <Text style={[styles.icon, mode === 'text' && styles.activeText]} importantForAccessibility="no">
-          ⌨️
+          TXT
         </Text>
         <Text style={[styles.label, mode === 'text' && styles.activeText]}>
           Text
@@ -114,7 +114,9 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   icon: {
-    fontSize: 18,
+    fontSize: FontSize.xs,
+    fontWeight: '700',
+    letterSpacing: 0.8,
   },
   label: {
     fontSize: FontSize.body,

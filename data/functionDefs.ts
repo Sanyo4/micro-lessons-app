@@ -74,18 +74,153 @@ export function getUserFacingFunctions(categoryIds: string[]): FunctionDefinitio
       },
     },
     {
-      name: 'navigate_to_screen',
-      description: 'Navigate the user to a different screen in the app. Use when the user asks to see their budget, lessons, challenges, or go home.',
+      name: 'get_budget_overview',
+      description: 'Get a full overview of all budget categories with spent, remaining, and percentage used. Use when the user asks about their overall budget.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
+    {
+      name: 'get_category_detail',
+      description: 'Get detailed info for a single budget category including recent transactions. Use when the user asks about a specific category.',
       parameters: {
         type: 'object',
         properties: {
-          screen: {
+          category: {
             type: 'string',
-            description: 'Screen to navigate to',
-            enum: ['budget', 'lessons', 'challenges', 'home', 'how-it-works'],
+            description: 'Budget category to get details for',
+            enum: categoryIds,
           },
         },
-        required: ['screen'],
+        required: ['category'],
+      },
+    },
+    {
+      name: 'adjust_budget_limit',
+      description: 'Increase, decrease, or set the weekly budget limit for a category. Use when the user wants to change, adjust, raise, lower, increase, decrease, or set their budget limit.',
+      parameters: {
+        type: 'object',
+        properties: {
+          category: {
+            type: 'string',
+            description: 'Budget category to adjust',
+            enum: categoryIds,
+          },
+          direction: {
+            type: 'string',
+            description: 'Whether to increase or decrease the limit. If the user just says "adjust" without specifying, omit this.',
+            enum: ['increase', 'decrease'],
+          },
+          amount: {
+            type: 'number',
+            description: 'Amount to adjust by in GBP (defaults to 5 if not specified)',
+          },
+          target_amount: {
+            type: 'number',
+            description: 'Exact weekly budget limit to set in GBP when the user says things like "set food to 40"',
+          },
+        },
+        required: ['category'],
+      },
+    },
+    {
+      name: 'get_recent_transactions',
+      description: 'Get the most recent transactions across all categories. Use when the user asks what they spent recently.',
+      parameters: {
+        type: 'object',
+        properties: {
+          count: {
+            type: 'number',
+            description: 'Number of transactions to return (default 5)',
+          },
+        },
+        required: [],
+      },
+    },
+    {
+      name: 'get_quest_log',
+      description: 'Show all active and completed quests/challenges with progress. Use when the user asks about quests, challenges, or their progress.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
+    {
+      name: 'accept_challenge',
+      description: 'Accept or start a new challenge/quest. Use when the user wants to start a challenge or accept a quest.',
+      parameters: {
+        type: 'object',
+        properties: {
+          challenge_type: {
+            type: 'string',
+            description: 'Type of challenge to start',
+            enum: ['track_purchases', 'reduce_spending', 'plan_budget'],
+          },
+        },
+        required: [],
+      },
+    },
+    {
+      name: 'check_pet_status',
+      description: 'Check the pet\'s current mood, health, streak, and evolution. Use when the user asks how the pet is doing.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
+    {
+      name: 'get_mood_history',
+      description: 'Get the pet\'s mood history over recent days. Use when the user asks how the pet has been or about mood trends.',
+      parameters: {
+        type: 'object',
+        properties: {
+          days: {
+            type: 'number',
+            description: 'Number of days to look back (default 7)',
+          },
+        },
+        required: [],
+      },
+    },
+    {
+      name: 'get_savings_projection',
+      description: 'Calculate projected savings if the user saves a certain amount per day. Use when the user asks about saving potential.',
+      parameters: {
+        type: 'object',
+        properties: {
+          daily_amount: {
+            type: 'number',
+            description: 'Amount to save per day in GBP',
+          },
+          period: {
+            type: 'string',
+            description: 'Period to project over',
+            enum: ['weekly', 'monthly', 'yearly'],
+          },
+        },
+        required: ['daily_amount', 'period'],
+      },
+    },
+    {
+      name: 'get_help',
+      description: 'Show what the user can do and say. Use when the user asks for help, what they can do, or seems confused.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
+    {
+      name: 'open_settings',
+      description: 'Open the settings or profile screen. Use when the user asks to open settings, edit their name, or change preferences.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
       },
     },
   ];

@@ -27,7 +27,9 @@ export default function BudgetPlanCard({ suggestion, onApply }: BudgetPlanCardPr
   return (
     <View style={styles.card}>
       <View style={styles.header}>
-        <Text style={styles.icon} importantForAccessibility="no">{icon}</Text>
+        <View style={styles.iconBadge}>
+          <Text style={styles.icon} importantForAccessibility="no">{icon}</Text>
+        </View>
         <View style={styles.headerText}>
           <Text style={styles.categoryName}>{suggestion.categoryName}</Text>
           <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
@@ -108,8 +110,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.md,
   },
+  iconBadge: {
+    minWidth: 42,
+    height: 32,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.menuBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.sm,
+  },
   icon: {
-    fontSize: 28,
+    fontSize: FontSize.xs,
+    fontWeight: '700',
+    color: Colors.text,
+    letterSpacing: 0.6,
   },
   headerText: {
     flex: 1,

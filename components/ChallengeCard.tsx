@@ -22,7 +22,7 @@ export default function ChallengeCard({
   completed,
 }: ChallengeCardProps) {
   const progressPercent = Math.min((progress / durationDays) * 100, 100);
-  const icon = CategoryIcons[category] ?? '🎯';
+  const icon = CategoryIcons[category] ?? 'GOAL';
 
   const animatedWidth = useAnimatedStyle(() => ({
     width: withTiming(`${progressPercent}%`, { duration: 500 }),
@@ -39,10 +39,12 @@ export default function ChallengeCard({
       accessibilityLabel={cardLabel}
     >
       <View style={styles.header}>
-        <Text style={styles.icon} importantForAccessibility="no">{icon}</Text>
+        <View style={styles.iconBadge}>
+          <Text style={styles.icon} importantForAccessibility="no">{icon}</Text>
+        </View>
         <View style={styles.headerText}>
           <Text style={[styles.title, completed && styles.titleCompleted]}>
-            {completed ? '✅ ' : ''}{title}
+            {completed ? 'DONE ' : ''}{title}
           </Text>
           <Text style={styles.description}>{description}</Text>
         </View>
@@ -87,9 +89,21 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: Spacing.md,
   },
-  icon: {
-    fontSize: 24,
+  iconBadge: {
+    minWidth: 40,
+    height: 28,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.menuBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.sm,
     marginTop: 2,
+  },
+  icon: {
+    fontSize: FontSize.xs,
+    fontWeight: '700',
+    color: Colors.text,
+    letterSpacing: 0.6,
   },
   headerText: {
     flex: 1,

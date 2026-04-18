@@ -5,6 +5,7 @@ export interface MicroLesson {
   insight: string;
   triggerType: 'budget_exceeded' | 'unusual_pattern' | 'time_based' | 'near_limit';
   category?: string;
+  sourceCategory?: string;
   xpReward: number;
   challengeTemplate: {
     title: string;
@@ -257,11 +258,7 @@ export function getLessonByTrigger(
   });
 
   if (candidates.length === 0) {
-    // Fall back to any lesson of this trigger type, even completed ones
-    const fallback = MICRO_LESSONS.filter(
-      (lesson) => lesson.triggerType === triggerType
-    );
-    return fallback[Math.floor(Math.random() * fallback.length)] ?? null;
+    return null;
   }
 
   return candidates[Math.floor(Math.random() * candidates.length)];

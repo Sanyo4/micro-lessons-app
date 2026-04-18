@@ -1,119 +1,273 @@
-import { useState } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import * as Speech from 'expo-speech';
 import { router } from 'expo-router';
 import OnboardingProgress from '../../components/OnboardingProgress';
+import PetTerminal from '../../components/pet/PetTerminal';
+import SpeechBubble from '../../components/pet/SpeechBubble';
 import { useOnboarding } from '../../services/onboardingContext';
-import { Colors, Spacing, FontSize, BorderRadius } from '../../constants/theme';
+import { useVoiceOnboarding } from '../../hooks/useVoiceOnboarding';
+import VoiceMicButton from '../../components/VoiceMicButton';
+import { useTheme } from '../../theme';
 
 const PERSONAS = [
   {
     key: 'beginner' as const,
     title: 'Keep it simple',
     description: 'No jargon, just clear guidance',
-    icon: '🌱',
+    cue: 'SIMPLE',
   },
   {
     key: 'learner' as const,
-    title: 'I know the basics',
-    description: 'Explain the why behind the numbers',
-    icon: '📖',
+    title: 'Explain the basics',
+    description: 'Show the why behind the numbers',
+    cue: 'GUIDE',
   },
   {
     key: 'pro' as const,
     title: 'Give me the raw data',
-    description: 'ISA rates, APR, compound interest — bring it on',
-    icon: '📊',
+    description: 'Use the full detail when it matters',
+    cue: 'DATA',
   },
 ];
 
 export default function PersonaScreen() {
+  const theme = useTheme();
   const { data, updateData } = useOnboarding();
   const [selected, setSelected] = useState<'beginner' | 'learner' | 'pro'>(data.financialPersona);
+  const autoContinueTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleSelect = (key: 'beginner' | 'learner' | 'pro') => {
-    setSelected(key);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const persona = PERSONAS.find((p) => p.key === key)!;
-    Speech.speak(persona.title, { rate: 0.95 });
-  };
+  const mono = theme.fontsLoaded ? theme.fonts.monospace : theme.fonts.monospaceFallback;
+  const heading = theme.fontsLoaded ? theme.fonts.heading : theme.fonts.headingFallback;
+  const promptText = "How should we talk about money? Say simple, basics, or data.";
 
-  const handleContinue = () => {
+  useEffect(() => () => {
+    if (autoContinueTimer.current) clearTimeout(autoContinueTimer.current);
+  }, []);
+
+  const handleContinue = useCallback(() => {
     updateData({ financialPersona: selected });
     router.push('/onboarding/plan');
-  };
+  }, [selected, updateData]);
+
+  const handleSelect = useCallback((key: 'beginner' | 'learner' | 'pro') => {
+    setSelected(key);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const persona = PERSONAS.find((entry) => entry.key === key);
+    if (persona) {
+      Speech.stop();
+      Speech.speak(persona.title, { rate: 0.95 });
+    }
+  }, []);
+
+  const handleVoiceSelect = useCallback((key: 'beginner' | 'learner' | 'pro') => {
+    handleSelect(key);
+    if (autoContinueTimer.current) clearTimeout(autoContinueTimer.current);
+    autoContinueTimer.current = setTimeout(() => {
+      updateData({ financialPersona: key });
+      router.push('/onboarding/plan');
+    }, 1200);
+  }, [handleSelect, updateData]);
+
+  const { isListening, transcript, startListening } = useVoiceOnboarding({
+    instruction: promptText,
+    keywords: {
+      simple: () => handleVoiceSelect('beginner'),
+      beginner: () => handleVoiceSelect('beginner'),
+      basics: () => handleVoiceSelect('learner'),
+      learner: () => handleVoiceSelect('learner'),
+      guide: () => handleVoiceSelect('learner'),
+      data: () => handleVoiceSelect('pro'),
+      pro: () => handleVoiceSelect('pro'),
+      raw: () => handleVoiceSelect('pro'),
+    },
+    enabled: true,
+  });
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.inner}>
-        <OnboardingProgress currentStep={4} totalSteps={7} />
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.base.background }]}>
+      <ScrollView
+        contentContainerStyle={[styles.content, { padding: theme.spacing.xl }]}
+        showsVerticalScrollIndicator={false}
+      >
+        <OnboardingProgress currentStep={5} totalSteps={9} />
 
-        <Text style={styles.title} accessibilityRole="header">Communication Style</Text>
-        <Text style={styles.subtitle}>How should we talk about money?</Text>
+        <PetTerminal petState="happy" petName={data.petName || 'Buddy'} compact />
 
-        <View style={styles.cards}>
-          {PERSONAS.map((persona) => (
-            <Pressable
-              key={persona.key}
-              style={[styles.card, selected === persona.key && styles.cardSelected]}
-              onPress={() => handleSelect(persona.key)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: selected === persona.key }}
-              accessibilityLabel={`${persona.title}. ${persona.description}`}
-            >
-              <Text style={styles.cardIcon}>{persona.icon}</Text>
-              <View style={styles.cardContent}>
-                <Text style={[styles.cardTitle, selected === persona.key && styles.cardTitleSelected]}>
-                  {persona.title}
-                </Text>
-                <Text style={styles.cardDesc}>{persona.description}</Text>
-              </View>
-              {selected === persona.key && (
-                <View style={styles.checkCircle}>
-                  <Text style={styles.check}>✓</Text>
+        <SpeechBubble
+          message={promptText}
+          autoSpeak={false}
+          onTTSDone={startListening}
+        />
+
+        <View style={[styles.cards, { gap: theme.spacing.md }]}>
+          {PERSONAS.map((persona) => {
+            const isSelected = selected === persona.key;
+            return (
+              <Pressable
+                key={persona.key}
+                style={[
+                  styles.card,
+                  {
+                    backgroundColor: theme.colors.base.surface,
+                    borderRadius: theme.radius.lg,
+                    borderColor: isSelected
+                      ? theme.colors.interactive.primary
+                      : theme.colors.base.border,
+                  },
+                  theme.shadows.sm,
+                ]}
+                onPress={() => handleSelect(persona.key)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: isSelected }}
+                accessibilityLabel={`${persona.title}. ${persona.description}`}
+              >
+                <View
+                  style={[
+                    styles.cueBadge,
+                    {
+                      backgroundColor: isSelected
+                        ? theme.colors.interactive.primary
+                        : theme.colors.base.background,
+                      borderRadius: theme.radius.full,
+                      borderColor: isSelected
+                        ? theme.colors.interactive.primary
+                        : theme.colors.base.border,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={{
+                      color: isSelected ? theme.colors.interactive.primaryText : theme.colors.base.textPrimary,
+                      fontFamily: mono,
+                      fontSize: theme.typeScale.caption,
+                      fontWeight: '700',
+                    }}
+                  >
+                    {persona.cue}
+                  </Text>
                 </View>
-              )}
-            </Pressable>
-          ))}
+
+                <View style={styles.cardCopy}>
+                  <Text
+                    style={{
+                      color: theme.colors.base.textPrimary,
+                      fontFamily: heading,
+                      fontSize: theme.typeScale.titleLarge,
+                    }}
+                  >
+                    {persona.title}
+                  </Text>
+                  <Text
+                    style={{
+                      color: theme.colors.base.textSecondary,
+                      fontSize: theme.typeScale.bodyLarge,
+                    }}
+                  >
+                    {persona.description}
+                  </Text>
+                </View>
+
+                {isSelected && (
+                  <View
+                    style={[
+                      styles.activeBadge,
+                      {
+                        backgroundColor: theme.colors.interactive.primary,
+                        borderRadius: theme.radius.sm,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={{
+                        color: theme.colors.interactive.primaryText,
+                        fontFamily: mono,
+                        fontSize: theme.typeScale.caption,
+                        fontWeight: '700',
+                      }}
+                    >
+                      ACTIVE
+                    </Text>
+                  </View>
+                )}
+              </Pressable>
+            );
+          })}
         </View>
 
-        <Pressable style={styles.cta} onPress={handleContinue} accessibilityRole="button">
-          <Text style={styles.ctaText}>Continue</Text>
+        <VoiceMicButton
+          onPress={startListening}
+          isListening={isListening}
+          transcript={transcript}
+        />
+
+        <Pressable
+          style={({ pressed }) => [
+            styles.cta,
+            {
+              backgroundColor: pressed
+                ? theme.colors.interactive.primaryPressed
+                : theme.colors.interactive.primary,
+              borderRadius: theme.radius.xl,
+            },
+            theme.shadows.md,
+          ]}
+          onPress={handleContinue}
+          accessibilityRole="button"
+          accessibilityLabel="Continue to plan selection"
+        >
+          <Text
+            style={{
+              color: theme.colors.interactive.primaryText,
+              fontFamily: heading,
+              fontSize: theme.typeScale.bodyLarge,
+              fontWeight: '700',
+            }}
+          >
+            Continue
+          </Text>
         </Pressable>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
-  inner: { flex: 1, paddingHorizontal: Spacing.xxl, paddingBottom: Spacing.xxxl, gap: Spacing.xxl },
-  title: { fontSize: FontSize.xxl, fontWeight: '700', color: Colors.text, textAlign: 'center' },
-  subtitle: { fontSize: FontSize.body, color: Colors.textSecondary, textAlign: 'center' },
-  cards: { flex: 1, justifyContent: 'center', gap: Spacing.lg },
+  container: {
+    flex: 1,
+  },
+  content: {
+    flexGrow: 1,
+    gap: 16,
+  },
+  cards: {
+    flexGrow: 1,
+  },
   card: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: Spacing.xl,
-    borderRadius: BorderRadius.lg,
     borderWidth: 2,
-    borderColor: Colors.border,
-    backgroundColor: Colors.surfaceSolid,
-    gap: Spacing.lg,
+    padding: 18,
+    gap: 14,
   },
-  cardSelected: {
-    borderColor: Colors.primary,
-    backgroundColor: '#E6F7F5',
+  cueBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
   },
-  cardIcon: { fontSize: 36 },
-  cardContent: { flex: 1, gap: Spacing.xs },
-  cardTitle: { fontSize: FontSize.lg, fontWeight: '700', color: Colors.text },
-  cardTitleSelected: { color: Colors.primary },
-  cardDesc: { fontSize: FontSize.sm, color: Colors.textSecondary },
-  checkCircle: { width: 28, height: 28, borderRadius: 14, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
-  check: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
-  cta: { backgroundColor: Colors.primary, borderRadius: BorderRadius.md, paddingVertical: Spacing.lg, alignItems: 'center' },
-  ctaText: { fontSize: FontSize.lg, fontWeight: '700', color: '#FFFFFF' },
+  cardCopy: {
+    gap: 6,
+  },
+  activeBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  cta: {
+    minHeight: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+  },
 });
