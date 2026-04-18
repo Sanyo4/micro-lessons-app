@@ -19,6 +19,9 @@ interface NeedsVsWantsGameProps {
   transactions: Transaction[];
   onComplete: (carePointsEarned: number) => void;
   onDismiss: () => void;
+  /** When true, completion skips DB writes (markGameCompleted + updatePetHealth).
+   *  Used by the Demo page so judges can replay without mutating real state. */
+  demoMode?: boolean;
 }
 
 export default function NeedsVsWantsGame({
@@ -26,6 +29,7 @@ export default function NeedsVsWantsGame({
   transactions,
   onComplete,
   onDismiss,
+  demoMode = false,
 }: NeedsVsWantsGameProps) {
   const theme = useTheme();
   const mono = theme.fontsLoaded ? theme.fonts.monospace : theme.fonts.monospaceFallback;
@@ -97,8 +101,10 @@ export default function NeedsVsWantsGame({
 
   const finishGame = async () => {
     const points = Math.round((score / items.length) * 15);
-    await markGameCompleted('needs_vs_wants');
-    await updatePetHealth(points);
+    if (!demoMode) {
+      await markGameCompleted('needs_vs_wants');
+      await updatePetHealth(points);
+    }
     onComplete(points);
   };
 

@@ -11,11 +11,14 @@ interface BNPLGameProps {
   visible: boolean;
   onComplete: (carePointsEarned: number) => void;
   onDismiss: () => void;
+  /** When true, completion skips DB writes (markGameCompleted + updatePetHealth).
+   *  Used by the Demo page so judges can replay without mutating real state. */
+  demoMode?: boolean;
 }
 
 type Phase = 'intro' | 'choice' | 'reveal' | 'done';
 
-export default function BNPLGame({ visible, onComplete, onDismiss }: BNPLGameProps) {
+export default function BNPLGame({ visible, onComplete, onDismiss, demoMode = false }: BNPLGameProps) {
   const theme = useTheme();
   const mono = theme.fontsLoaded ? theme.fonts.monospace : theme.fonts.monospaceFallback;
   const [phase, setPhase] = useState<Phase>('intro');
@@ -51,8 +54,10 @@ export default function BNPLGame({ visible, onComplete, onDismiss }: BNPLGamePro
 
   const finishGame = async () => {
     const points = userChoice === 'buy' ? 15 : 10;
-    await markGameCompleted('bnpl');
-    await updatePetHealth(points);
+    if (!demoMode) {
+      await markGameCompleted('bnpl');
+      await updatePetHealth(points);
+    }
     onComplete(points);
   };
 

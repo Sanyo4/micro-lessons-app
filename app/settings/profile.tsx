@@ -103,6 +103,12 @@ export default function ProfileScreen() {
           <Text style={[styles.actionBtnText, { color: theme.colors.interactive.secondaryText }]}>Accessibility Settings</Text>
         </Pressable>
 
+        {/* Demo Mode */}
+        <Pressable onPress={() => router.push('/demo')} accessibilityLabel="Open demo mode" accessibilityRole="button"
+          style={({ pressed }) => [styles.actionBtn, { backgroundColor: pressed ? theme.colors.interactive.secondaryPressed : theme.colors.interactive.secondary, borderRadius: theme.radius.xl }]}>
+          <Text style={[styles.actionBtnText, { color: theme.colors.interactive.secondaryText }]}>Demo Mode</Text>
+        </Pressable>
+
         {/* Reset */}
         <Pressable onPress={handleReset} accessibilityLabel="Reset all data" accessibilityRole="button"
           style={({ pressed }) => [styles.actionBtn, { backgroundColor: pressed ? theme.colors.interactive.dangerPressed : theme.colors.interactive.danger, borderRadius: theme.radius.xl }]}>
