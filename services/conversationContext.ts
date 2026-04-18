@@ -2,7 +2,8 @@
 // Sits between speech input and Gemma — intercepts utterances during
 // active flows (confirmation, games) via keyword matching. No LLM needed.
 
-import { executeFunctionCall, type FunctionCallResult, type ContentType } from './functionExecutor';
+import { getBudgetCategories, getBudgetCategory } from './database';
+import type { ContentType } from './functionExecutor';
 import type { PendingTransaction } from './ai';
 
 export type FlowType = 'none' | 'confirmation' | 'lesson_offer' | 'game_needs_vs_wants' | 'game_bnpl';
@@ -45,7 +46,7 @@ const DISMISS_KEYWORDS = ['dismiss', 'skip', 'no', 'nope', 'nah', 'maybe later',
 const CONFIRM_KEYWORDS = ['yes', 'confirm', 'do it', 'log it', 'go ahead', 'sure', 'yep', 'yeah', 'ok', 'okay'];
 const CANCEL_KEYWORDS = ['no', 'cancel', 'never mind', 'nope', 'nah', 'stop', 'forget it', 'skip'];
 const AMOUNT_PATTERN = /(?:change|set|make)\s*(?:it|the|amount)?\s*(?:to)?\s*(\d+(?:\.\d{1,2})?)/i;
-const CATEGORY_PATTERN = /(?:change|set|switch)\s*(?:the)?\s*category\s*(?:to)?\s*(\w+)/i;
+const CATEGORY_PATTERN = /(?:change|set|switch)\s*(?:the)?\s*category\s*(?:to)?\s*([\w\s]+)/i;
 
 class ConversationContext {
   private state: ConversationState = {
@@ -104,7 +105,7 @@ class ConversationContext {
   }
 
   // Main intercept: returns handled=true if we consumed the utterance
-  intercept(text: string): ContextResult {
+  async intercept(text: string): Promise<ContextResult> {
     const lower = text.toLowerCase().trim();
 
     switch (this.state.activeFlow) {
@@ -148,7 +149,7 @@ class ConversationContext {
     };
   }
 
-  private handleConfirmationInput(lower: string, original: string): ContextResult {
+  private async handleConfirmationInput(lower: string, original: string): Promise<ContextResult> {
     const pending = this.state.pendingTransaction;
     if (!pending) {
       this.reset();
@@ -194,11 +195,30 @@ class ConversationContext {
     // Edit category
     const catMatch = original.match(CATEGORY_PATTERN);
     if (catMatch) {
-      const newCat = catMatch[1].toLowerCase();
+      const requestedCategory = catMatch[1].trim().toLowerCase();
+      const categories = await getBudgetCategories();
+      const matchedCategory = categories.find(
+        (category) =>
+          category.id.toLowerCase() === requestedCategory ||
+          category.name.toLowerCase() === requestedCategory
+      );
+
+      if (!matchedCategory) {
+        return {
+          handled: true,
+          responseText: `I couldn't find a ${requestedCategory} budget. Say a category like food, transport, or coffee.`,
+          contentType: 'confirmation',
+          data: pending,
+        };
+      }
+
+      const refreshedCategory = await getBudgetCategory(matchedCategory.id);
       this.state.pendingTransaction = {
         ...pending,
-        category: newCat,
-        categoryName: newCat.charAt(0).toUpperCase() + newCat.slice(1),
+        category: matchedCategory.id,
+        categoryName: refreshedCategory?.name ?? matchedCategory.name,
+        budgetSpent: refreshedCategory?.spent ?? pending.budgetSpent,
+        budgetLimit: refreshedCategory?.weekly_limit ?? pending.budgetLimit,
       };
       return {
         handled: true,

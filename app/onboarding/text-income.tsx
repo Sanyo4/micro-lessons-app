@@ -1,17 +1,31 @@
-import { useState } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { useMemo, useState } from 'react';
+import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import OnboardingProgress from '../../components/OnboardingProgress';
 import NumPad from '../../components/NumPad';
+import PetTerminal from '../../components/pet/PetTerminal';
+import SpeechBubble from '../../components/pet/SpeechBubble';
 import { useOnboarding } from '../../services/onboardingContext';
-import { Colors, Spacing, FontSize, BorderRadius } from '../../constants/theme';
+import { useTheme } from '../../theme';
 
 export default function TextIncomeScreen() {
+  const theme = useTheme();
   const { data, updateData } = useOnboarding();
   const [value, setValue] = useState(data.monthlyIncome > 0 ? data.monthlyIncome.toString() : '');
   const [frequency, setFrequency] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
+
+  const mono = theme.fontsLoaded ? theme.fonts.monospace : theme.fonts.monospaceFallback;
+  const heading = theme.fontsLoaded ? theme.fonts.heading : theme.fonts.headingFallback;
+  const promptText = 'Type your monthly take-home pay. You can switch between weekly, monthly, and yearly input.';
+
+  const numValue = parseFloat(value) || 0;
+  const monthlyValue = useMemo(() => {
+    if (frequency === 'weekly') return numValue * 4.3;
+    if (frequency === 'yearly') return numValue / 12;
+    return numValue;
+  }, [frequency, numValue]);
 
   const handleDigit = (digit: string) => {
     if (digit === '.' && value.includes('.')) return;
@@ -23,11 +37,6 @@ export default function TextIncomeScreen() {
     setValue((prev) => prev.slice(0, -1));
   };
 
-  const numValue = parseFloat(value) || 0;
-  const monthlyValue = frequency === 'weekly' ? numValue * 4.3
-    : frequency === 'yearly' ? numValue / 12
-    : numValue;
-
   const handleContinue = () => {
     if (monthlyValue <= 0) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -36,66 +45,180 @@ export default function TextIncomeScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.inner}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.base.background }]}>
+      <ScrollView
+        contentContainerStyle={[styles.content, { padding: theme.spacing.xl }]}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
         <OnboardingProgress currentStep={4} totalSteps={9} />
 
-        <Text style={styles.title} accessibilityRole="header">Monthly Income</Text>
+        <PetTerminal petState="neutral" petName={data.petName || 'Buddy'} compact />
 
-        <View style={styles.display}>
-          <Text style={styles.currency}>£</Text>
-          <Text style={styles.amount}>{value || '0'}</Text>
-        </View>
+        <SpeechBubble message={promptText} autoSpeak={false} />
 
-        <View style={styles.freqRow}>
-          {(['weekly', 'monthly', 'yearly'] as const).map((f) => (
-            <Pressable
-              key={f}
-              style={[styles.freqButton, frequency === f && styles.freqButtonActive]}
-              onPress={() => setFrequency(f)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: frequency === f }}
+        <View
+          style={[
+            styles.terminalCard,
+            {
+              backgroundColor: theme.colors.base.surface,
+              borderRadius: theme.radius.terminal,
+              borderColor: theme.colors.petStates.neutral.light,
+            },
+            theme.shadows.md,
+          ]}
+        >
+          <View
+            style={[
+              styles.terminalInner,
+              {
+                backgroundColor: theme.colors.base.terminal,
+                borderRadius: theme.radius.terminal - 2,
+                padding: theme.spacing.lg,
+              },
+            ]}
+          >
+            <Text
+              style={{
+                color: theme.colors.petStates.neutral.light,
+                fontFamily: mono,
+                fontSize: theme.typeScale.terminalSmall,
+              }}
             >
-              <Text style={[styles.freqText, frequency === f && styles.freqTextActive]}>
-                {f.charAt(0).toUpperCase() + f.slice(1)}
+              {'> income.manual_entry'}
+            </Text>
+            <Text
+              style={{
+                color: theme.colors.base.terminalText,
+                fontFamily: mono,
+                fontSize: theme.typeScale.terminal,
+                fontWeight: '700',
+              }}
+            >
+              {`> £${value || '0'}`}
+            </Text>
+            {frequency !== 'monthly' && numValue > 0 && (
+              <Text
+                style={{
+                  color: theme.colors.base.terminalText,
+                  fontFamily: mono,
+                  fontSize: theme.typeScale.terminalSmall,
+                  opacity: 0.7,
+                }}
+              >
+                {`> ≈ £${Math.round(monthlyValue).toLocaleString()} / month`}
               </Text>
-            </Pressable>
-          ))}
+            )}
+          </View>
         </View>
 
-        {frequency !== 'monthly' && numValue > 0 && (
-          <Text style={styles.conversion}>≈ £{Math.round(monthlyValue).toLocaleString()} / month</Text>
-        )}
+        <View style={[styles.frequencyRow, { gap: theme.spacing.sm }]}>
+          {(['weekly', 'monthly', 'yearly'] as const).map((option) => {
+            const selected = frequency === option;
+            return (
+              <Pressable
+                key={option}
+                style={({ pressed }) => [
+                  styles.frequencyButton,
+                  {
+                    backgroundColor: selected
+                      ? pressed
+                        ? theme.colors.interactive.primaryPressed
+                        : theme.colors.interactive.primary
+                      : theme.colors.base.surface,
+                    borderColor: selected
+                      ? theme.colors.interactive.primary
+                      : theme.colors.base.border,
+                    borderRadius: theme.radius.full,
+                  },
+                ]}
+                onPress={() => setFrequency(option)}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+              >
+                <Text
+                  style={{
+                    color: selected ? theme.colors.interactive.primaryText : theme.colors.base.textPrimary,
+                    fontFamily: mono,
+                    fontSize: theme.typeScale.bodySmall,
+                    fontWeight: '700',
+                  }}
+                >
+                  {option.toUpperCase()}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
 
         <NumPad onDigit={handleDigit} onDelete={handleDelete} showDecimal />
 
         <Pressable
-          style={[styles.cta, monthlyValue <= 0 && styles.ctaDisabled]}
+          style={({ pressed }) => [
+            styles.cta,
+            {
+              backgroundColor: monthlyValue > 0
+                ? pressed
+                  ? theme.colors.interactive.primaryPressed
+                  : theme.colors.interactive.primary
+                : theme.colors.interactive.disabled,
+              borderRadius: theme.radius.xl,
+            },
+            monthlyValue > 0 ? theme.shadows.md : undefined,
+          ]}
           onPress={handleContinue}
           disabled={monthlyValue <= 0}
           accessibilityRole="button"
+          accessibilityLabel="Continue to fixed expenses"
         >
-          <Text style={styles.ctaText}>Continue</Text>
+          <Text
+            style={{
+              color: monthlyValue > 0 ? theme.colors.interactive.primaryText : theme.colors.interactive.disabledText,
+              fontFamily: heading,
+              fontSize: theme.typeScale.bodyLarge,
+              fontWeight: '700',
+            }}
+          >
+            Continue
+          </Text>
         </Pressable>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
-  inner: { flex: 1, paddingHorizontal: Spacing.xxl, paddingBottom: Spacing.xxxl, gap: Spacing.md, alignItems: 'center' },
-  title: { fontSize: FontSize.xxl, fontWeight: '700', color: Colors.text },
-  display: { flexDirection: 'row', alignItems: 'baseline', paddingVertical: Spacing.md },
-  currency: { fontSize: FontSize.xxl, color: Colors.textMuted, fontWeight: '600' },
-  amount: { fontSize: 44, fontWeight: '700', color: Colors.text },
-  freqRow: { flexDirection: 'row', gap: Spacing.sm },
-  freqButton: { paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm, borderRadius: BorderRadius.full, borderWidth: 1, borderColor: Colors.border },
-  freqButtonActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
-  freqText: { fontSize: FontSize.sm, color: Colors.textSecondary, fontWeight: '600' },
-  freqTextActive: { color: '#FFFFFF' },
-  conversion: { fontSize: FontSize.sm, color: Colors.primary, fontWeight: '600' },
-  cta: { backgroundColor: Colors.primary, borderRadius: BorderRadius.md, paddingVertical: Spacing.lg, alignItems: 'center', alignSelf: 'stretch', marginTop: Spacing.sm },
-  ctaDisabled: { opacity: 0.4 },
-  ctaText: { fontSize: FontSize.lg, fontWeight: '700', color: '#FFFFFF' },
+  container: {
+    flex: 1,
+  },
+  content: {
+    flexGrow: 1,
+    gap: 16,
+  },
+  terminalCard: {
+    borderWidth: 2,
+    overflow: 'hidden',
+  },
+  terminalInner: {
+    gap: 10,
+  },
+  frequencyRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+  },
+  frequencyButton: {
+    minWidth: 92,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+  },
+  cta: {
+    minHeight: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+  },
 });

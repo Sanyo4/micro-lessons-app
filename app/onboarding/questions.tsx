@@ -80,6 +80,7 @@ export default function QuestionsScreen() {
       'nah': () => handleAnswer('no'),
     },
     enabled: !isFinished,
+    autoSpeakInstruction: false,
   });
 
   return (
@@ -146,7 +147,10 @@ export default function QuestionsScreen() {
         {!isFinished && currentQuestion ? (
           <>
             <View style={{ marginTop: theme.spacing.md }}>
-              <SpeechBubble message={currentQuestion.text} />
+              <SpeechBubble
+                message={voiceInstruction}
+                onTTSDone={startListening}
+              />
             </View>
 
             {/* Terminal-style Y/N prompt */}

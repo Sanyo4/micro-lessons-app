@@ -1,6 +1,6 @@
 // Reusable voice onboarding hook — shake to talk + keyword matching.
 // Each screen passes an instruction (TTS) and keyword→handler map.
-// User hears instruction → auto-mic activates → says keyword → handler fires.
+// User hears instruction → ready haptic → auto-mic activates → says keyword → handler fires.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Platform } from 'react-native';
@@ -26,6 +26,8 @@ interface VoiceOnboardingOptions {
   speakDelay?: number;
   // Whether the hook is active (default true)
   enabled?: boolean;
+  // Whether the hook should speak the instruction automatically on mount
+  autoSpeakInstruction?: boolean;
 }
 
 interface VoiceOnboardingState {
@@ -44,12 +46,18 @@ export function useVoiceOnboarding({
   keywords,
   speakDelay = 600,
   enabled = true,
+  autoSpeakInstruction = true,
 }: VoiceOnboardingOptions): VoiceOnboardingState {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const keywordsRef = useRef(keywords);
   const instructionRef = useRef(instruction);
   const hadFinalResultRef = useRef(false);
+  const isListeningRef = useRef(false);
+  const isArmingRef = useRef(false);
+  const armSequenceRef = useRef(0);
+
+  const wait = useCallback((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)), []);
 
   // Keep refs fresh
   useEffect(() => {
@@ -59,62 +67,90 @@ export function useVoiceOnboarding({
     instructionRef.current = instruction;
   }, [instruction]);
 
-  const startListening = useCallback(async () => {
+  const armListening = useCallback(async (interruptSpeech = false) => {
     if (!enabled || Platform.OS === 'web') return;
-    Speech.stop();
-    const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-    if (!result.granted) return;
-    setTranscript('');
-    playMicActivateHaptic();
-    ExpoSpeechRecognitionModule.start({
-      lang: 'en-US',
-      interimResults: true,
-      continuous: false,
-    });
-  }, [enabled]);
+    if (isListeningRef.current || isArmingRef.current) return;
+
+    isArmingRef.current = true;
+    const armId = armSequenceRef.current + 1;
+    armSequenceRef.current = armId;
+
+    try {
+      if (interruptSpeech) {
+        Speech.stop();
+        await wait(80);
+      }
+
+      const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      if (!result.granted) return;
+
+      setTranscript('');
+      await playMicActivateHaptic();
+      await wait(100);
+
+      if (armSequenceRef.current !== armId || isListeningRef.current) return;
+
+      ExpoSpeechRecognitionModule.start({
+        lang: 'en-US',
+        interimResults: true,
+        continuous: false,
+      });
+    } finally {
+      if (!isListeningRef.current && armSequenceRef.current === armId) {
+        isArmingRef.current = false;
+      }
+    }
+  }, [enabled, wait]);
+
+  const startListening = useCallback(() => {
+    void armListening(true);
+  }, [armListening]);
 
   // Speak instruction on mount, auto-mic when done
   useEffect(() => {
     if (!enabled) return;
     const timer = setTimeout(() => {
+      if (!autoSpeakInstruction) return;
       Speech.speak(instruction, {
         language: 'en-US',
         rate: 0.9,
-        onDone: () => { startListening(); },
+        onDone: () => { void armListening(false); },
         onStopped: () => { /* user interrupted — no auto-mic */ },
       });
     }, speakDelay);
     return () => {
       clearTimeout(timer);
       Speech.stop();
+      isArmingRef.current = false;
+      armSequenceRef.current += 1;
     };
-  }, [instruction, speakDelay, enabled, startListening]);
+  }, [instruction, speakDelay, enabled, autoSpeakInstruction, armListening]);
 
   const repeatInstruction = useCallback(() => {
     Speech.stop();
     Speech.speak(instructionRef.current, {
       language: 'en-US',
       rate: 0.9,
-      onDone: () => { startListening(); },
+      onDone: () => { void armListening(false); },
       onStopped: () => {},
     });
-  }, [startListening]);
+  }, [armListening]);
 
   const speakWithAutoMic = useCallback((text: string, rate = 0.95) => {
     Speech.stop();
     Speech.speak(text, {
       language: 'en-US',
       rate,
-      onDone: () => { startListening(); },
+      onDone: () => { void armListening(false); },
       onStopped: () => {},
     });
-  }, [startListening]);
+  }, [armListening]);
 
   // Shake to start listening
   useShakeDetector({
     onShake: () => {
-      playShakeDetectedHaptic();
-      startListening();
+      void playShakeDetectedHaptic();
+      void armListening(true);
     },
     enabled: enabled && !isListening,
   });
@@ -122,13 +158,21 @@ export function useVoiceOnboarding({
   // Speech recognition events
   useSpeechRecognitionEvent('start', () => {
     hadFinalResultRef.current = false;
+    isArmingRef.current = false;
+    isListeningRef.current = true;
     setIsListening(true);
   });
   useSpeechRecognitionEvent('end', () => {
+    isArmingRef.current = false;
+    isListeningRef.current = false;
     setIsListening(false);
     if (hadFinalResultRef.current) playMicDeactivateHaptic();
   });
-  useSpeechRecognitionEvent('error', () => setIsListening(false));
+  useSpeechRecognitionEvent('error', () => {
+    isArmingRef.current = false;
+    isListeningRef.current = false;
+    setIsListening(false);
+  });
   useSpeechRecognitionEvent('result', (event) => {
     const text = event.results[0]?.transcript ?? '';
     setTranscript(text);

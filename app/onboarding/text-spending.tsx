@@ -1,12 +1,14 @@
-import { useState, useMemo } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { useMemo, useState } from 'react';
+import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { useAnimatedStyle, withTiming } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import OnboardingProgress from '../../components/OnboardingProgress';
+import PetTerminal from '../../components/pet/PetTerminal';
+import SpeechBubble from '../../components/pet/SpeechBubble';
 import { useOnboarding } from '../../services/onboardingContext';
-import { Colors, Spacing, FontSize, BorderRadius } from '../../constants/theme';
+import { useTheme } from '../../theme';
 
 const SLIDER_WIDTH = 300;
 const KNOB_SIZE = 32;
@@ -15,18 +17,24 @@ const MAX = 1000;
 const STEP = 25;
 
 export default function TextSpendingScreen() {
+  const theme = useTheme();
   const { data, updateData } = useOnboarding();
-  const totalBills = data.fixedExpenses.reduce((sum, b) => sum + b.amount, 0);
+  const totalBills = data.fixedExpenses.reduce((sum, bill) => sum + bill.amount, 0);
   const available = Math.max(0, data.monthlyIncome - totalBills);
   const maxSlider = available > 0 ? Math.min(available, MAX) : MAX;
 
   const [value, setValue] = useState(
-    data.flexibleSpending > 0 ? data.flexibleSpending : Math.round(available * 0.8)
+    data.flexibleSpending > 0 ? data.flexibleSpending : Math.round(available * 0.8),
   );
 
-  const position = useMemo(() => {
-    return ((value - MIN) / (maxSlider - MIN)) * (SLIDER_WIDTH - KNOB_SIZE);
-  }, [value, maxSlider]);
+  const mono = theme.fontsLoaded ? theme.fonts.monospace : theme.fonts.monospaceFallback;
+  const heading = theme.fontsLoaded ? theme.fonts.heading : theme.fonts.headingFallback;
+  const promptText = 'Set your monthly flexible spending target for groceries, travel, meals, and shopping.';
+
+  const position = useMemo(
+    () => ((value - MIN) / Math.max(maxSlider - MIN, 1)) * (SLIDER_WIDTH - KNOB_SIZE),
+    [value, maxSlider],
+  );
 
   const knobStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: withTiming(position, { duration: 100 }) }],
@@ -48,94 +56,270 @@ export default function TextSpendingScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.inner}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.base.background }]}>
+      <ScrollView
+        contentContainerStyle={[styles.content, { padding: theme.spacing.xl }]}
+        showsVerticalScrollIndicator={false}
+      >
         <OnboardingProgress currentStep={4} totalSteps={9} />
 
-        <Text style={styles.title} accessibilityRole="header">Flexible Spending</Text>
-        <Text style={styles.subtitle}>How much for daily spending each month?</Text>
+        <PetTerminal petState="neutral" petName={data.petName || 'Buddy'} compact />
 
-        {available > 0 && (
-          <Text style={styles.availableText}>
-            £{available.toLocaleString()} available after bills
-          </Text>
-        )}
+        <SpeechBubble message={promptText} autoSpeak={false} />
 
-        <View style={styles.amountDisplay}>
-          <Text style={styles.amountText}>£{value.toLocaleString()}</Text>
-          <Text style={styles.perMonth}>per month</Text>
+        <View
+          style={[
+            styles.terminalCard,
+            {
+              backgroundColor: theme.colors.base.surface,
+              borderRadius: theme.radius.terminal,
+              borderColor: theme.colors.petStates.neutral.light,
+            },
+            theme.shadows.md,
+          ]}
+        >
+          <View
+            style={[
+              styles.terminalInner,
+              {
+                backgroundColor: theme.colors.base.terminal,
+                borderRadius: theme.radius.terminal - 2,
+                padding: theme.spacing.lg,
+              },
+            ]}
+          >
+            <Text
+              style={{
+                color: theme.colors.petStates.neutral.light,
+                fontFamily: mono,
+                fontSize: theme.typeScale.terminalSmall,
+              }}
+            >
+              {'> flexible_budget.manual_entry'}
+            </Text>
+            {available > 0 && (
+              <Text
+                style={{
+                  color: theme.colors.base.terminalText,
+                  fontFamily: mono,
+                  fontSize: theme.typeScale.terminalSmall,
+                  opacity: 0.7,
+                }}
+              >
+                {`> available after bills: £${available.toLocaleString()}`}
+              </Text>
+            )}
+            <Text
+              style={{
+                color: theme.colors.base.terminalText,
+                fontFamily: mono,
+                fontSize: theme.typeScale.terminal,
+                fontWeight: '700',
+              }}
+            >
+              {`> target: £${value.toLocaleString()}`}
+            </Text>
+          </View>
         </View>
 
         <View style={styles.sliderContainer}>
-          <View style={styles.track}>
-            <Animated.View style={[styles.fill, fillStyle]} />
-            <Animated.View style={[styles.knob, knobStyle]} />
+          <View
+            style={[
+              styles.track,
+              {
+                backgroundColor: theme.colors.base.border,
+                borderRadius: theme.radius.full,
+              },
+            ]}
+          >
+            <Animated.View
+              style={[
+                styles.fill,
+                {
+                  backgroundColor: theme.colors.interactive.primary,
+                  borderRadius: theme.radius.full,
+                },
+                fillStyle,
+              ]}
+            />
+            <Animated.View
+              style={[
+                styles.knob,
+                {
+                  backgroundColor: theme.colors.interactive.primary,
+                  borderColor: theme.colors.base.background,
+                },
+                knobStyle,
+              ]}
+            />
           </View>
           <View style={styles.sliderLabels}>
-            <Text style={styles.sliderLabel}>£{MIN}</Text>
-            <Text style={styles.sliderLabel}>£{maxSlider}</Text>
+            <Text style={{ color: theme.colors.base.textSecondary, fontFamily: mono, fontSize: theme.typeScale.caption }}>
+              £{MIN}
+            </Text>
+            <Text style={{ color: theme.colors.base.textSecondary, fontFamily: mono, fontSize: theme.typeScale.caption }}>
+              £{maxSlider}
+            </Text>
           </View>
         </View>
 
-        <View style={styles.adjustRow}>
+        <View style={[styles.adjustRow, { gap: theme.spacing.lg }]}>
           <Pressable
-            style={styles.adjustButton}
+            style={[
+              styles.adjustButton,
+              {
+                backgroundColor: theme.colors.base.surface,
+                borderColor: theme.colors.base.border,
+                borderRadius: theme.radius.lg,
+              },
+            ]}
             onPress={() => adjustValue(-STEP)}
             accessibilityRole="button"
             accessibilityLabel={`Decrease by £${STEP}`}
           >
-            <Text style={styles.adjustText}>−£{STEP}</Text>
+            <Text style={{ color: theme.colors.base.textPrimary, fontFamily: mono, fontSize: theme.typeScale.bodyLarge }}>
+              -£{STEP}
+            </Text>
           </Pressable>
           <Pressable
-            style={styles.adjustButton}
+            style={[
+              styles.adjustButton,
+              {
+                backgroundColor: theme.colors.base.surface,
+                borderColor: theme.colors.base.border,
+                borderRadius: theme.radius.lg,
+              },
+            ]}
             onPress={() => adjustValue(STEP)}
             accessibilityRole="button"
             accessibilityLabel={`Increase by £${STEP}`}
           >
-            <Text style={styles.adjustText}>+£{STEP}</Text>
+            <Text style={{ color: theme.colors.base.textPrimary, fontFamily: mono, fontSize: theme.typeScale.bodyLarge }}>
+              +£{STEP}
+            </Text>
           </Pressable>
         </View>
 
-        <View style={styles.includesBox}>
-          <Text style={styles.includesTitle}>This includes:</Text>
-          <Text style={styles.includesText}>Groceries, Transport, Dining, Shopping</Text>
+        <View
+          style={[
+            styles.includesBox,
+            {
+              backgroundColor: theme.colors.base.surface,
+              borderColor: theme.colors.base.border,
+              borderRadius: theme.radius.lg,
+            },
+            theme.shadows.sm,
+          ]}
+        >
+          <Text style={{ color: theme.colors.base.textPrimary, fontFamily: heading, fontSize: theme.typeScale.bodyLarge }}>
+            Included categories
+          </Text>
+          <Text style={{ color: theme.colors.base.textSecondary, fontFamily: mono, fontSize: theme.typeScale.bodySmall }}>
+            groceries  transport  meals  shopping
+          </Text>
         </View>
 
         <Pressable
-          style={[styles.cta, value <= 0 && styles.ctaDisabled]}
+          style={({ pressed }) => [
+            styles.cta,
+            {
+              backgroundColor: value > 0
+                ? pressed
+                  ? theme.colors.interactive.primaryPressed
+                  : theme.colors.interactive.primary
+                : theme.colors.interactive.disabled,
+              borderRadius: theme.radius.xl,
+            },
+            value > 0 ? theme.shadows.md : undefined,
+          ]}
           onPress={handleContinue}
           disabled={value <= 0}
           accessibilityRole="button"
+          accessibilityLabel="Continue to communication style"
         >
-          <Text style={styles.ctaText}>Continue</Text>
+          <Text
+            style={{
+              color: value > 0 ? theme.colors.interactive.primaryText : theme.colors.interactive.disabledText,
+              fontFamily: heading,
+              fontSize: theme.typeScale.bodyLarge,
+              fontWeight: '700',
+            }}
+          >
+            Continue
+          </Text>
         </Pressable>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
-  inner: { flex: 1, paddingHorizontal: Spacing.xxl, paddingBottom: Spacing.xxxl, gap: Spacing.lg, alignItems: 'center', justifyContent: 'center' },
-  title: { fontSize: FontSize.xxl, fontWeight: '700', color: Colors.text },
-  subtitle: { fontSize: FontSize.body, color: Colors.textSecondary, textAlign: 'center' },
-  availableText: { fontSize: FontSize.sm, color: Colors.success, fontWeight: '600' },
-  amountDisplay: { alignItems: 'center' },
-  amountText: { fontSize: 44, fontWeight: '700', color: Colors.primary },
-  perMonth: { fontSize: FontSize.sm, color: Colors.textMuted },
-  sliderContainer: { width: SLIDER_WIDTH, gap: Spacing.sm },
-  track: { height: 8, backgroundColor: Colors.menuBg, borderRadius: 4, justifyContent: 'center' },
-  fill: { position: 'absolute', left: 0, height: 8, backgroundColor: Colors.primary, borderRadius: 4 },
-  knob: { position: 'absolute', width: KNOB_SIZE, height: KNOB_SIZE, borderRadius: KNOB_SIZE / 2, backgroundColor: Colors.primary, borderWidth: 3, borderColor: '#FFFFFF', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 4, elevation: 3 },
-  sliderLabels: { flexDirection: 'row', justifyContent: 'space-between' },
-  sliderLabel: { fontSize: FontSize.xs, color: Colors.textMuted },
-  adjustRow: { flexDirection: 'row', gap: Spacing.lg },
-  adjustButton: { paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md, borderRadius: BorderRadius.md, backgroundColor: Colors.menuBg, borderWidth: 1, borderColor: Colors.border },
-  adjustText: { fontSize: FontSize.body, fontWeight: '600', color: Colors.text },
-  includesBox: { backgroundColor: Colors.menuBg, borderRadius: BorderRadius.md, padding: Spacing.md, alignSelf: 'stretch', alignItems: 'center' },
-  includesTitle: { fontSize: FontSize.xs, fontWeight: '600', color: Colors.textSecondary },
-  includesText: { fontSize: FontSize.sm, color: Colors.textMuted },
-  cta: { backgroundColor: Colors.primary, borderRadius: BorderRadius.md, paddingVertical: Spacing.lg, alignItems: 'center', alignSelf: 'stretch' },
-  ctaDisabled: { opacity: 0.4 },
-  ctaText: { fontSize: FontSize.lg, fontWeight: '700', color: '#FFFFFF' },
+  container: {
+    flex: 1,
+  },
+  content: {
+    flexGrow: 1,
+    gap: 16,
+  },
+  terminalCard: {
+    borderWidth: 2,
+    overflow: 'hidden',
+  },
+  terminalInner: {
+    gap: 10,
+  },
+  sliderContainer: {
+    width: SLIDER_WIDTH,
+    alignSelf: 'center',
+    gap: 8,
+  },
+  track: {
+    height: 8,
+    justifyContent: 'center',
+  },
+  fill: {
+    position: 'absolute',
+    left: 0,
+    height: 8,
+  },
+  knob: {
+    position: 'absolute',
+    width: KNOB_SIZE,
+    height: KNOB_SIZE,
+    borderRadius: KNOB_SIZE / 2,
+    borderWidth: 3,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  sliderLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  adjustRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  adjustButton: {
+    minWidth: 112,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderWidth: 1,
+  },
+  includesBox: {
+    alignItems: 'center',
+    gap: 6,
+    padding: 16,
+    borderWidth: 1,
+  },
+  cta: {
+    minHeight: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+  },
 });

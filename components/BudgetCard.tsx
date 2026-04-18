@@ -63,7 +63,7 @@ export default function BudgetCard({ id, name, icon, spent, limit }: BudgetCardP
       </View>
       <Text style={[styles.amount, exceeded && styles.amountExceeded]}>
         £{spent.toFixed(0)} / £{limit.toFixed(0)}
-        {exceeded && <Text importantForAccessibility="no"> ⚠️</Text>}
+        {exceeded && <Text importantForAccessibility="no"> [OVER]</Text>}
       </Text>
     </Pressable>
   );
@@ -89,14 +89,17 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
   },
   iconContainer: {
-    width: 32,
+    minWidth: 44,
     height: 32,
-    borderRadius: 8,
+    borderRadius: 16,
+    paddingHorizontal: Spacing.xs,
     justifyContent: 'center',
     alignItems: 'center',
   },
   icon: {
-    fontSize: 16,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.6,
   },
   name: {
     fontSize: FontSize.sm,

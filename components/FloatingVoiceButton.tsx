@@ -12,7 +12,7 @@ export default function FloatingVoiceButton() {
       accessibilityLabel="Voice input"
       accessibilityHint="Navigates to home screen with voice mode"
     >
-      <Text style={styles.icon}>🎙️</Text>
+      <Text style={styles.icon}>MIC</Text>
     </TouchableOpacity>
   );
 }
@@ -35,6 +35,9 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   icon: {
-    fontSize: 24,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 0.8,
   },
 });

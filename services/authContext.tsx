@@ -98,7 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Mark biometric as enabled in app settings
         const settings = await getAppSettings();
         if (settings) {
-          await updateAppSettings({ biometric_enabled: 1 } as any);
+          await updateAppSettings({ biometric_enabled: 1 });
         }
         return true;
       }

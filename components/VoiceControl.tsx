@@ -257,7 +257,7 @@ export default function VoiceControl({ onSend, isProcessing, shakeTrigger, ttsTr
             style={[styles.transcript, { color: theme.colors.base.textSecondary, fontFamily: mono, fontSize: 13 * fs }]}
             accessibilityLiveRegion="polite"
           >
-            {isProcessing ? 'Processing...' : transcript ? transcript : recognizing ? 'Listening...' : 'Tap to speak'}
+            {isProcessing ? 'Processing...' : transcript ? transcript : recognizing ? 'Listening...' : 'Shake to speak. Tap if needed.'}
           </Text>
         </View>
       ) : (

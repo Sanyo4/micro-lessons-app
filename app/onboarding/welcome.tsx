@@ -53,6 +53,7 @@ export default function WelcomeScreen() {
       },
     },
     enabled: true,
+    autoSpeakInstruction: false,
   });
 
   return (
@@ -110,7 +111,10 @@ export default function WelcomeScreen() {
 
           {/* Speech bubble */}
           <View style={{ marginTop: theme.spacing.md }}>
-            <SpeechBubble message="Something's hatching! Give it a name to begin." />
+            <SpeechBubble
+              message="Something's hatching! Give it a name. Shake your phone and say a name."
+              onTTSDone={startListening}
+            />
           </View>
 
           {/* Terminal-style name input */}

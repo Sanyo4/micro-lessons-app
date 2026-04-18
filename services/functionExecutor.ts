@@ -129,6 +129,15 @@ export async function executeFunctionCall(
   }
 }
 
+function withLessonSource(lesson: MicroLesson | null, sourceCategory?: string): MicroLesson | null {
+  if (!lesson) return null;
+
+  return {
+    ...lesson,
+    sourceCategory: sourceCategory ?? lesson.sourceCategory ?? lesson.category,
+  };
+}
+
 async function handleLogTransaction(
   params: Record<string, unknown>
 ): Promise<FunctionCallResult> {
@@ -258,6 +267,8 @@ async function handleLogTransaction(
       }
     } catch { /* game triggers are non-critical */ }
 
+    const resolvedLesson = withLessonSource(lesson, category);
+
     return {
       functionName: 'log_transaction',
       success: true,
@@ -265,7 +276,7 @@ async function handleLogTransaction(
       data: { transactionId: Date.now(), budgetStatus: budgetCat, percentage },
       responseText,
       xpEarned: totalXP,
-      lesson: lesson ?? null,
+      lesson: resolvedLesson,
       petCoachingDialogue,
       game,
     };
@@ -426,14 +437,16 @@ async function handleGetMicroLesson(
       : 'Your spending patterns are worth a look.';
     const personalityText = getPersonalityResponse(triggerType, context);
 
+    const resolvedLesson = withLessonSource(lesson, category);
+
     return {
       functionName: 'get_micro_lesson',
       success: true,
       params,
-      data: lesson,
+      data: resolvedLesson,
       responseText: personalityText,
       xpEarned: XP_AWARDS.VIEW_LESSON,
-      lesson,
+      lesson: resolvedLesson,
     };
   } catch (error) {
     return {
@@ -541,12 +554,41 @@ async function handleCheckTimeTriggers(
   const currentDay = params.current_day as string;
   const currentTime = params.current_time as string;
   const hour = parseInt(currentTime.split(':')[0], 10);
+  const today = new Date();
+
+  const activeChallenges = await getActiveChallenges();
+  if (activeChallenges.length > 0) {
+    return {
+      functionName: 'check_time_triggers',
+      success: true,
+      params,
+      data: { triggered: false, reason: 'active_challenge' },
+      responseText: '',
+      xpEarned: 0,
+    };
+  }
+
+  const completedLessonRecords = await getCompletedLessons();
+  const hasTimeLessonToday = completedLessonRecords.some((record) => {
+    const lesson = getLessonById(record.lesson_id);
+    return lesson?.triggerType === 'time_based' && new Date(record.completed_at).toDateString() === today.toDateString();
+  });
+
+  if (hasTimeLessonToday) {
+    return {
+      functionName: 'check_time_triggers',
+      success: true,
+      params,
+      data: { triggered: false, reason: 'already_shown_today' },
+      responseText: '',
+      xpEarned: 0,
+    };
+  }
 
   let triggerType: string | null = null;
   let responseText = '';
 
   // Payday trigger: 25th-28th of month or last few days
-  const today = new Date();
   const dayOfMonth = today.getDate();
   if (dayOfMonth >= 25 && dayOfMonth <= 28) {
     triggerType = 'time_based';
@@ -582,14 +624,24 @@ async function handleCheckTimeTriggers(
   }
 
   // Get a time-based lesson
-  const completedLessonRecords = await getCompletedLessons();
   const completedIds = completedLessonRecords.map((l) => l.lesson_id);
   const lesson = getLessonByTrigger('time_based', undefined, completedIds);
 
-  if (lesson) {
-    await markLessonCompleted(lesson.id);
-    await updateUserXP(XP_AWARDS.VIEW_LESSON);
+  if (!lesson) {
+    return {
+      functionName: 'check_time_triggers',
+      success: true,
+      params,
+      data: { triggered: false, reason: 'no_new_lessons' },
+      responseText: '',
+      xpEarned: 0,
+    };
   }
+
+  await markLessonCompleted(lesson.id);
+  await updateUserXP(XP_AWARDS.VIEW_LESSON);
+
+  const resolvedLesson = withLessonSource(lesson);
 
   return {
     functionName: 'check_time_triggers',
@@ -597,8 +649,8 @@ async function handleCheckTimeTriggers(
     params,
     data: { triggered: true, triggerType },
     responseText,
-    xpEarned: lesson ? XP_AWARDS.VIEW_LESSON : 0,
-    lesson: lesson ?? null,
+    xpEarned: resolvedLesson ? XP_AWARDS.VIEW_LESSON : 0,
+    lesson: resolvedLesson,
   };
 }
 
@@ -613,27 +665,46 @@ async function handleGetBudgetOverview(
     const totalLimit = categories.reduce((sum, c) => sum + c.weekly_limit, 0);
     const totalRemaining = totalLimit - totalSpent;
     const overallPercent = totalLimit > 0 ? Math.round((totalSpent / totalLimit) * 100) : 0;
+    const severityRank: Record<'ok' | 'tight' | 'over', number> = { ok: 0, tight: 1, over: 2 };
 
     const categoryLines = categories.map((c) => {
       const pct = c.weekly_limit > 0 ? Math.round((c.spent / c.weekly_limit) * 100) : 0;
       const remaining = c.weekly_limit - c.spent;
       const name = c.name.charAt(0).toUpperCase() + c.name.slice(1);
-      const status = remaining < 0 ? 'over' : pct > 80 ? 'tight' : 'ok';
+      const status: 'ok' | 'tight' | 'over' = remaining < 0 ? 'over' : pct > 80 ? 'tight' : 'ok';
       return { name, spent: c.spent, limit: c.weekly_limit, remaining, pct, status, id: c.id };
+    }).sort((left, right) => {
+      const severityDiff = severityRank[right.status] - severityRank[left.status];
+      if (severityDiff !== 0) return severityDiff;
+      if (left.status === 'over' && right.status === 'over') {
+        return Math.abs(right.remaining) - Math.abs(left.remaining);
+      }
+      return right.pct - left.pct;
     });
 
     // Build TTS-friendly response
     const tightCategories = categoryLines.filter((c) => c.status === 'tight' || c.status === 'over');
+    const spotlight = tightCategories[0] ?? categoryLines[0];
     let responseText = `Your budget is ${overallPercent}% used this week. `;
     if (totalRemaining > 0) {
       responseText += `\u00A3${totalRemaining.toFixed(2)} left overall. `;
     } else {
       responseText += `You're \u00A3${Math.abs(totalRemaining).toFixed(2)} over budget overall. `;
     }
-    if (tightCategories.length > 0) {
-      responseText += tightCategories
-        .map((c) => `${c.name} is ${c.status === 'over' ? 'over budget' : `at ${c.pct}%`}`)
-        .join('. ') + '.';
+    if (spotlight) {
+      if (spotlight.status === 'over') {
+        responseText += `${spotlight.name} is the most over budget at \u00A3${Math.abs(spotlight.remaining).toFixed(2)} over. `;
+      } else if (spotlight.status === 'tight') {
+        responseText += `${spotlight.name} is the tightest category at ${spotlight.pct}% used. `;
+      } else {
+        responseText += 'Everything looks on track. ';
+      }
+
+      if (spotlight.status === 'ok') {
+        responseText += `Say "check ${spotlight.id} budget" if you want details.`;
+      } else {
+        responseText += `Say "check ${spotlight.id} budget" for details or "increase ${spotlight.id} by 5" to adjust it.`;
+      }
     } else {
       responseText += 'Everything looks on track.';
     }
@@ -678,6 +749,7 @@ async function handleGetCategoryDetail(
     } else {
       responseText += 'No transactions this week.';
     }
+    responseText += ' Say "increase by 5" or "decrease by 5" to adjust this budget.';
 
     return {
       functionName: 'get_category_detail',
@@ -699,6 +771,7 @@ async function handleAdjustBudgetLimit(
   const category = params.category as string;
   const direction = params.direction as 'increase' | 'decrease' | undefined;
   const amount = (params.amount as number) || 5;
+  const targetAmount = params.target_amount as number | undefined;
 
   try {
     const budgetCat = await getBudgetCategory(category);
@@ -708,7 +781,7 @@ async function handleAdjustBudgetLimit(
     const categoryName = budgetCat.name.charAt(0).toUpperCase() + budgetCat.name.slice(1);
 
     // If no direction specified, show current limit and ask
-    if (!direction) {
+    if (!direction && targetAmount === undefined) {
       const remaining = budgetCat.weekly_limit - budgetCat.spent;
       const transactions = await getTransactionsByCategory(category, 'weekly');
       const recent = transactions.slice(0, 5);
@@ -724,17 +797,25 @@ async function handleAdjustBudgetLimit(
     }
 
     const oldLimit = budgetCat.weekly_limit;
-    const delta = direction === 'increase' ? amount : -amount;
-    const newLimit = Math.max(0, oldLimit + delta);
+    const delta = direction === 'increase' ? amount : direction === 'decrease' ? -amount : 0;
+    const newLimit = Math.max(0, targetAmount ?? (oldLimit + delta));
 
     await updateCategoryLimit(category, newLimit);
+    const refreshedCategory = await getBudgetCategory(category);
+    const transactions = await getTransactionsByCategory(category, 'weekly');
+    const recent = transactions.slice(0, 5);
+    const categoryData = refreshedCategory ?? { ...budgetCat, weekly_limit: newLimit };
+    const remaining = categoryData.weekly_limit - categoryData.spent;
+    const pct = categoryData.weekly_limit > 0
+      ? Math.round((categoryData.spent / categoryData.weekly_limit) * 100)
+      : 0;
 
     return {
       functionName: 'adjust_budget_limit',
       success: true,
       params,
-      data: { category, oldLimit, newLimit },
-      responseText: `${categoryName} limit changed from \u00A3${oldLimit.toFixed(2)} to \u00A3${newLimit.toFixed(2)} per week.`,
+      data: { category: categoryData, transactions: recent, remaining, pct },
+      responseText: `${categoryName} limit changed from \u00A3${oldLimit.toFixed(2)} to \u00A3${newLimit.toFixed(2)} per week. Say "increase by 5" or "decrease by 5" to adjust again.`,
       contentType: 'category_detail',
       xpEarned: 0,
     };
@@ -978,19 +1059,20 @@ async function handleGetHelp(
     const tight = categories.find((c) => c.spent / c.weekly_limit > 0.8);
     if (tight) {
       const name = tight.name.charAt(0).toUpperCase() + tight.name.slice(1);
-      contextHint = ` Right now your ${name} budget is getting tight \u2014 try asking about it.`;
+      contextHint = ` Right now your ${name} budget is getting tight \u2014 try saying "check ${tight.id} budget".`;
     }
     const active = await getActiveChallenges();
     if (active.length > 0) {
-      contextHint += ` You've got an active quest \u2014 ask about your progress.`;
+      contextHint += ` You've got an active quest \u2014 try saying "quest progress".`;
     }
   } catch {}
 
   const commands = [
     '"spent 5 on coffee"',
-    '"how\'s my budget?"',
-    '"tell me about food"',
-    '"increase coffee by 5"',
+    '"show my budget"',
+    '"check food budget"',
+    '"increase food by 5"',
+    '"set food to 40"',
     '"show my quests"',
     '"start a challenge"',
     '"how\'s Buddy?"',

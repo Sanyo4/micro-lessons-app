@@ -59,7 +59,7 @@ export default function VoiceMicButton({ onPress, isListening, transcript, disab
           onPress={onPress}
           disabled={disabled}
           accessibilityRole="button"
-          accessibilityLabel={isListening ? 'Listening' : 'Tap to speak'}
+          accessibilityLabel={isListening ? 'Listening' : 'Shake to speak. Tap if needed.'}
           style={[
             styles.micButton,
             {
@@ -71,13 +71,22 @@ export default function VoiceMicButton({ onPress, isListening, transcript, disab
             },
           ]}
         >
-          <Text style={styles.micIcon}>
-            {isListening ? '\u23F9\uFE0F' : '\uD83C\uDF99\uFE0F'}
+          <Text
+            style={[
+              styles.micIcon,
+              {
+                color: theme.colors.interactive.primaryText,
+                fontFamily: mono,
+                fontSize: 12 * fs,
+              },
+            ]}
+          >
+            {isListening ? 'REC' : 'MIC'}
           </Text>
         </Pressable>
       </View>
       <Text style={{ color: theme.colors.base.textSecondary, fontFamily: mono, fontSize: 12 * fs, textAlign: 'center', minHeight: 18 }}>
-        {isListening ? (transcript || 'listening...') : 'shake or tap to speak'}
+        {isListening ? (transcript || 'listening...') : 'Shake to speak. Tap if needed.'}
       </Text>
     </View>
   );
@@ -113,6 +122,7 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
   },
   micIcon: {
-    fontSize: 22,
+    fontWeight: '700',
+    letterSpacing: 0.8,
   },
 });

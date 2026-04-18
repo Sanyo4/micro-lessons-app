@@ -1,7 +1,7 @@
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import * as Speech from 'expo-speech';
-import { Colors, Spacing, FontSize, BorderRadius } from '../constants/theme';
+import { useTheme } from '../theme';
 
 interface NumPadProps {
   onDigit: (digit: string) => void;
@@ -22,6 +22,10 @@ export default function NumPad({
   currentLength,
   maxLength,
 }: NumPadProps) {
+  const theme = useTheme();
+  const mono = theme.fontsLoaded ? theme.fonts.monospaceBold : theme.fonts.monospaceFallback;
+  const fs = theme.fontScale;
+
   const handlePress = (value: string) => {
     if (disabled) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -45,12 +49,12 @@ export default function NumPad({
   ];
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { gap: theme.spacing.md }]}>
       {rows.map((row, rowIndex) => (
-        <View key={rowIndex} style={styles.row}>
+        <View key={rowIndex} style={[styles.row, { gap: theme.spacing.md }]}>
           {row.map((value) => {
             if (value === '') {
-              return <View key="empty" style={styles.emptyButton} />;
+              return <View key={`empty-${rowIndex}`} style={styles.emptyButton} />;
             }
             if (value === 'DEL') {
               return (
@@ -58,7 +62,11 @@ export default function NumPad({
                   key="del"
                   style={({ pressed }) => [
                     styles.button,
-                    styles.deleteButton,
+                    {
+                      borderRadius: theme.radius.lg,
+                      backgroundColor: theme.colors.interactive.danger + '26',
+                      borderColor: theme.colors.interactive.danger,
+                    },
                     pressed && styles.buttonPressed,
                     disabled && styles.buttonDisabled,
                   ]}
@@ -67,7 +75,18 @@ export default function NumPad({
                   accessibilityLabel="Delete"
                   disabled={disabled}
                 >
-                  <Text style={[styles.buttonText, styles.deleteText]}>←</Text>
+                  <Text
+                    style={[
+                      styles.buttonText,
+                      {
+                        color: theme.colors.interactive.dangerText,
+                        fontFamily: mono,
+                        fontSize: 15 * fs,
+                      },
+                    ]}
+                  >
+                    DEL
+                  </Text>
                 </Pressable>
               );
             }
@@ -76,6 +95,11 @@ export default function NumPad({
                 key={value}
                 style={({ pressed }) => [
                   styles.button,
+                  {
+                    borderRadius: theme.radius.lg,
+                    backgroundColor: theme.colors.base.surface,
+                    borderColor: theme.colors.base.border,
+                  },
                   pressed && styles.buttonPressed,
                   disabled && styles.buttonDisabled,
                 ]}
@@ -84,7 +108,18 @@ export default function NumPad({
                 accessibilityLabel={value}
                 disabled={disabled}
               >
-                <Text style={styles.buttonText}>{value}</Text>
+                <Text
+                  style={[
+                    styles.buttonText,
+                    {
+                      color: theme.colors.base.textPrimary,
+                      fontFamily: mono,
+                      fontSize: 26 * fs,
+                    },
+                  ]}
+                >
+                  {value}
+                </Text>
               </Pressable>
             );
           })}
@@ -96,43 +131,29 @@ export default function NumPad({
 
 const styles = StyleSheet.create({
   container: {
-    gap: Spacing.md,
     alignItems: 'center',
   },
   row: {
     flexDirection: 'row',
-    gap: Spacing.md,
   },
   button: {
     width: BUTTON_SIZE,
     height: BUTTON_SIZE,
-    borderRadius: BorderRadius.lg,
-    backgroundColor: Colors.menuBg,
     borderWidth: 1,
-    borderColor: Colors.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
   buttonPressed: {
-    backgroundColor: Colors.primary,
+    opacity: 0.82,
   },
   buttonDisabled: {
     opacity: 0.4,
-  },
-  deleteButton: {
-    backgroundColor: Colors.dangerLight,
-    borderColor: Colors.danger,
   },
   emptyButton: {
     width: BUTTON_SIZE,
     height: BUTTON_SIZE,
   },
   buttonText: {
-    fontSize: FontSize.xxl,
     fontWeight: '600',
-    color: Colors.text,
-  },
-  deleteText: {
-    color: Colors.danger,
   },
 });

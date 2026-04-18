@@ -8,58 +8,28 @@ interface SpeechBubbleProps {
   message: string;
   onAnimationComplete?: () => void;
   onTTSDone?: () => void;
+  autoSpeak?: boolean;
 }
 
-export default function SpeechBubble({ message, onAnimationComplete, onTTSDone }: SpeechBubbleProps) {
+export default function SpeechBubble({
+  message,
+  onAnimationComplete,
+  onTTSDone,
+  autoSpeak = true,
+}: SpeechBubbleProps) {
   const theme = useTheme();
   const [displayedText, setDisplayedText] = useState('');
   const [isAnimating, setIsAnimating] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const indexRef = useRef(0);
   const onTTSDoneRef = useRef(onTTSDone);
+  const autoSpeakRef = useRef(autoSpeak);
 
   useEffect(() => { onTTSDoneRef.current = onTTSDone; }, [onTTSDone]);
+  useEffect(() => { autoSpeakRef.current = autoSpeak; }, [autoSpeak]);
 
   const reducedMotion = theme.accessibility.reducedMotion;
   const speed = getTypewriterSpeed(theme.accessibility.ttsSpeed);
-
-  // Start typewriter animation when message changes
-  useEffect(() => {
-    if (!message) {
-      setDisplayedText('');
-      return;
-    }
-
-    if (reducedMotion) {
-      // Show full text immediately in reduced motion mode
-      setDisplayedText(message);
-      speakMessage(message);
-      onAnimationComplete?.();
-      return;
-    }
-
-    // Reset and start typewriter
-    setDisplayedText('');
-    indexRef.current = 0;
-    setIsAnimating(true);
-
-    intervalRef.current = setInterval(() => {
-      indexRef.current += 1;
-      if (indexRef.current >= message.length) {
-        setDisplayedText(message);
-        setIsAnimating(false);
-        if (intervalRef.current) clearInterval(intervalRef.current);
-        speakMessage(message);
-        onAnimationComplete?.();
-      } else {
-        setDisplayedText(message.slice(0, indexRef.current));
-      }
-    }, speed);
-
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [message, reducedMotion, speed]);
 
   const speakMessage = useCallback(async (text: string) => {
     try {
@@ -78,15 +48,59 @@ export default function SpeechBubble({ message, onAnimationComplete, onTTSDone }
     }
   }, [theme.accessibility.ttsSpeed]);
 
-  const handleTapToSkip = useCallback(() => {
-    if (!isAnimating) return;
+  // Start typewriter animation when message changes
+  useEffect(() => {
+    if (!message) {
+      setDisplayedText('');
+      return;
+    }
 
-    // Skip to full text
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    setDisplayedText(message);
-    setIsAnimating(false);
+    if (reducedMotion) {
+      // Show full text immediately in reduced motion mode
+      setDisplayedText(message);
+      if (autoSpeak) {
+        speakMessage(message);
+      }
+      onAnimationComplete?.();
+      return;
+    }
+
+    // Reset and start typewriter
+    setDisplayedText('');
+    indexRef.current = 0;
+    setIsAnimating(true);
+
+    intervalRef.current = setInterval(() => {
+      indexRef.current += 1;
+      if (indexRef.current >= message.length) {
+        setDisplayedText(message);
+        setIsAnimating(false);
+        if (intervalRef.current) clearInterval(intervalRef.current);
+        if (autoSpeakRef.current) {
+          speakMessage(message);
+        }
+        onAnimationComplete?.();
+      } else {
+        setDisplayedText(message.slice(0, indexRef.current));
+      }
+    }, speed);
+
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [message, reducedMotion, speed, autoSpeak, speakMessage, onAnimationComplete]);
+
+  const handleBubblePress = useCallback(() => {
+    if (isAnimating) {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      setDisplayedText(message);
+      setIsAnimating(false);
+      speakMessage(message);
+      onAnimationComplete?.();
+      return;
+    }
+
     speakMessage(message);
-    onAnimationComplete?.();
   }, [isAnimating, message, speakMessage, onAnimationComplete]);
 
   if (!message) return null;
@@ -102,11 +116,11 @@ export default function SpeechBubble({ message, onAnimationComplete, onTTSDone }
       />
 
       <Pressable
-        onPress={handleTapToSkip}
+        onPress={handleBubblePress}
         accessible
         accessibilityRole="text"
         accessibilityLabel={message}
-        accessibilityHint={isAnimating ? 'Tap to skip animation' : 'Double tap to hear again'}
+        accessibilityHint={isAnimating ? 'Tap to skip animation' : 'Tap to hear again'}
         style={[
           styles.bubble,
           {

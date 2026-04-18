@@ -4,7 +4,7 @@ import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { useTheme } from '../theme';
 import { type ContentType } from '../services/functionExecutor';
 import BudgetOverviewCard from './cards/BudgetOverviewCard';
-import CategoryDetailCard from './cards/CategoryDetailCard';
+import CategoryDetailCard, { type CategoryDetailCardData } from './cards/CategoryDetailCard';
 import TransactionsCard from './cards/TransactionsCard';
 import QuestLogCard from './cards/QuestLogCard';
 import PetStatusCard from './cards/PetStatusCard';
@@ -23,6 +23,7 @@ export interface ContentState {
 
 interface DynamicContentAreaProps {
   contentState: ContentState | null;
+  onAdjustCategoryLimit?: (categoryId: string, delta: number) => Promise<void> | void;
 }
 
 // ---------- Fallback for types without a dedicated card ----------
@@ -58,7 +59,10 @@ function TerminalTextCard({ text }: { text: string }) {
 
 // ---------- Card resolver ----------
 
-function renderCard(contentState: ContentState): React.ReactNode {
+function renderCard(
+  contentState: ContentState,
+  onAdjustCategoryLimit?: (categoryId: string, delta: number) => Promise<void> | void
+): React.ReactNode {
   const { type, data, responseText } = contentState;
 
   switch (type) {
@@ -66,7 +70,7 @@ function renderCard(contentState: ContentState): React.ReactNode {
       return <BudgetOverviewCard data={data as any} />;
 
     case 'category_detail':
-      return <CategoryDetailCard data={data as any} />;
+      return <CategoryDetailCard data={data as CategoryDetailCardData} onAdjustLimit={onAdjustCategoryLimit} />;
 
     case 'quest_log':
     case 'quest_progress':
@@ -103,20 +107,21 @@ function renderCard(contentState: ContentState): React.ReactNode {
 
 // ---------- Main component ----------
 
-export default function DynamicContentArea({ contentState }: DynamicContentAreaProps) {
+export default function DynamicContentArea({ contentState, onAdjustCategoryLimit }: DynamicContentAreaProps) {
   const reducedMotion = useTheme().accessibility.reducedMotion;
 
   if (!contentState || contentState.type === 'idle') {
     return null;
   }
 
-  // Use the content type as key so the animation re-fires when the card changes.
-  const animationKey = `${contentState.type}-${Date.now()}`;
+  // Keep the animation key stable across re-renders. Using Date.now() here
+  // forces a brand-new mounted tree every render and can break Fabric mounts.
+  const animationKey = `${contentState.type}:${contentState.responseText}`;
 
   if (reducedMotion) {
     return (
       <View style={styles.wrapper}>
-        {renderCard(contentState)}
+        {renderCard(contentState, onAdjustCategoryLimit)}
       </View>
     );
   }
@@ -128,7 +133,7 @@ export default function DynamicContentArea({ contentState }: DynamicContentAreaP
       exiting={FadeOut.duration(200)}
       style={styles.wrapper}
     >
-      {renderCard(contentState)}
+      {renderCard(contentState, onAdjustCategoryLimit)}
     </Animated.View>
   );
 }

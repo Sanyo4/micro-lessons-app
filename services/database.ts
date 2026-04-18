@@ -1,4 +1,5 @@
 import * as SQLite from 'expo-sqlite';
+import { CategoryIcons } from '../constants/theme';
 
 let db: SQLite.SQLiteDatabase | null = null;
 
@@ -64,6 +65,7 @@ async function initializeDatabase(database: SQLite.SQLiteDatabase): Promise<void
       input_preference TEXT DEFAULT 'voice',
       financial_persona TEXT DEFAULT 'beginner',
       selected_plan_id TEXT,
+      biometric_enabled INTEGER DEFAULT 0,
       created_at TEXT NOT NULL
     );
 
@@ -87,6 +89,9 @@ async function initializeDatabase(database: SQLite.SQLiteDatabase): Promise<void
   } catch (_) { /* column already exists */ }
   try {
     await database.execAsync('ALTER TABLE user_profile ADD COLUMN flexible_budget REAL DEFAULT 0');
+  } catch (_) { /* column already exists */ }
+  try {
+    await database.execAsync('ALTER TABLE app_settings ADD COLUMN biometric_enabled INTEGER DEFAULT 0');
   } catch (_) { /* column already exists */ }
 
   // Migrate pet_profile: add health_points
@@ -161,6 +166,17 @@ async function initializeDatabase(database: SQLite.SQLiteDatabase): Promise<void
       verbose_screenreader INTEGER DEFAULT 0
     );
   `);
+
+  await normalizeBudgetCategoryIcons(database);
+}
+
+async function normalizeBudgetCategoryIcons(database: SQLite.SQLiteDatabase): Promise<void> {
+  for (const [categoryId, iconLabel] of Object.entries(CategoryIcons)) {
+    await database.runAsync(
+      'UPDATE budget_categories SET icon = ? WHERE id = ? AND icon <> ?',
+      [iconLabel, categoryId, iconLabel]
+    );
+  }
 }
 
 // ========== App Settings ==========
@@ -188,6 +204,7 @@ export async function updateAppSettings(partial: Partial<Omit<AppSettings, 'id' 
   if (partial.input_preference !== undefined) { sets.push('input_preference = ?'); values.push(partial.input_preference); }
   if (partial.financial_persona !== undefined) { sets.push('financial_persona = ?'); values.push(partial.financial_persona); }
   if (partial.selected_plan_id !== undefined) { sets.push('selected_plan_id = ?'); values.push(partial.selected_plan_id ?? null); }
+  if (partial.biometric_enabled !== undefined) { sets.push('biometric_enabled = ?'); values.push(partial.biometric_enabled); }
   if (sets.length === 0) return;
   await database.runAsync(`UPDATE app_settings SET ${sets.join(', ')} WHERE id = 1`, values);
 }
@@ -511,6 +528,7 @@ export interface AppSettings {
   input_preference: string;
   financial_persona: string;
   selected_plan_id: string | null;
+  biometric_enabled: number;
   created_at: string;
 }
 

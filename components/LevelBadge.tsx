@@ -26,7 +26,7 @@ export default function LevelBadge({ level, xp, streakDays }: LevelBadgeProps) {
         </View>
         {streakDays > 0 && (
           <View style={styles.streakBadge}>
-            <Text style={styles.streakText}>🔥 {streakDays}</Text>
+            <Text style={styles.streakText}>RUN {streakDays}</Text>
           </View>
         )}
       </View>

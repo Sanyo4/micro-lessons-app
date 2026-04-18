@@ -1,4 +1,5 @@
 import * as Speech from 'expo-speech';
+import type { MicroLesson } from '../data/lessons';
 import type { BudgetState } from '../utils/budgetState';
 import { playBudgetHaptic } from './haptics';
 import { playBudgetTone } from './tonalAudio';
@@ -148,5 +149,31 @@ export function speakFunctionResult(responseText: string): void {
     language: 'en-US',
     rate: 0.9,
     pitch: 1.0,
+  });
+}
+
+export function speakQuestOffer(
+  lesson: MicroLesson,
+  onDone?: () => void,
+): void {
+  const template = lesson.challengeTemplate;
+  const message = [
+    'New quest.',
+    `${template.title}.`,
+    template.description,
+    lesson.insight ? `Why it matters: ${lesson.insight}.` : '',
+    `Reward ${template.xp_reward} care points.`,
+    'Say accept quest to start, or say maybe later to skip.',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  Speech.stop();
+  Speech.speak(message, {
+    language: 'en-US',
+    rate: 0.9,
+    pitch: 1.0,
+    onDone,
+    onStopped: () => {},
   });
 }

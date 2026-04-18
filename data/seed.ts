@@ -1,4 +1,5 @@
 import * as SQLite from 'expo-sqlite';
+import { CategoryIcons } from '../constants/theme';
 
 export async function seedDatabase(database: SQLite.SQLiteDatabase): Promise<void> {
   // Check if onboarding is completed — if so, no seeding needed
@@ -27,10 +28,10 @@ export async function seedDatabase(database: SQLite.SQLiteDatabase): Promise<voi
   await database.execAsync(`
     INSERT INTO budget_categories (id, name, weekly_limit, spent, icon, color)
     VALUES
-      ('coffee', 'Coffee', 20.0, 17.0, '☕', '#92400E'),
-      ('food', 'Food', 80.0, 45.0, '🍕', '#1E40AF'),
-      ('transport', 'Transport', 40.0, 22.0, '🚌', '#3730A3'),
-      ('entertainment', 'Entertainment', 30.0, 10.0, '🎬', '#9D174D');
+      ('coffee', 'Coffee', 20.0, 17.0, '${CategoryIcons.coffee}', '#92400E'),
+      ('food', 'Food', 80.0, 45.0, '${CategoryIcons.food}', '#1E40AF'),
+      ('transport', 'Transport', 40.0, 22.0, '${CategoryIcons.transport}', '#3730A3'),
+      ('entertainment', 'Entertainment', 30.0, 10.0, '${CategoryIcons.entertainment}', '#9D174D');
 
     INSERT INTO transactions (amount, category_id, description, timestamp)
     VALUES

@@ -3,28 +3,14 @@ import { useRef, useEffect } from 'react';
 import { View, Text, Pressable, StyleSheet, Modal, AccessibilityInfo, findNodeHandle, Platform } from 'react-native';
 import Animated, { SlideInDown } from 'react-native-reanimated';
 import { useTheme } from '../theme';
-
-interface LessonData {
-  id: string;
-  title: string;
-  body: string;
-  insight: string;
-  triggerType: string;
-  xpReward: number;
-  challengeTemplate: {
-    title: string;
-    description: string;
-    type: string;
-    duration_days: number;
-    xp_reward: number;
-  };
-}
+import type { MicroLesson } from '../data/lessons';
 
 interface MicroLessonModalProps {
   visible: boolean;
-  lesson: LessonData | null | undefined;
+  lesson: MicroLesson | null | undefined;
   onAcceptChallenge: () => void;
   onDismiss: () => void;
+  pendingAction?: 'accept' | 'dismiss' | null;
 }
 
 export default function MicroLessonModal({
@@ -32,6 +18,7 @@ export default function MicroLessonModal({
   lesson,
   onAcceptChallenge,
   onDismiss,
+  pendingAction = null,
 }: MicroLessonModalProps) {
   const theme = useTheme();
   const titleRef = useRef<Text>(null);
@@ -56,7 +43,7 @@ export default function MicroLessonModal({
       visible={visible}
       transparent
       animationType="none"
-      onRequestClose={onDismiss}
+      onRequestClose={() => { if (!pendingAction) onDismiss(); }}
     >
       <View style={styles.overlay}>
           <Animated.View
@@ -122,11 +109,12 @@ export default function MicroLessonModal({
                 },
               ]}
               onPress={onAcceptChallenge}
+              disabled={Boolean(pendingAction)}
               accessibilityRole="button"
               accessibilityLabel={`Accept quest: ${ct.title}, ${ct.duration_days} days for ${ct.xp_reward} care points`}
             >
               <Text style={{ color: theme.colors.interactive.primaryText, fontFamily: mono, fontSize: 16, fontWeight: '700' }}>
-                Accept Quest
+                {pendingAction === 'accept' ? 'Accepting...' : 'Accept Quest'}
               </Text>
             </Pressable>
             <Pressable
@@ -138,11 +126,12 @@ export default function MicroLessonModal({
                 },
               ]}
               onPress={onDismiss}
+              disabled={Boolean(pendingAction)}
               accessibilityRole="button"
               accessibilityLabel="Dismiss quest"
             >
               <Text style={{ color: theme.colors.interactive.secondaryText, fontFamily: mono, fontSize: 14, fontWeight: '600' }}>
-                Maybe Later
+                {pendingAction === 'dismiss' ? 'Closing...' : 'Maybe Later'}
               </Text>
             </Pressable>
           </View>

@@ -6,6 +6,7 @@ import {
 } from 'cactus-react-native';
 
 import { getUserFacingFunctions } from '../data/functionDefs';
+import type { MicroLesson } from '../data/lessons';
 import { executeFunctionCall, type FunctionCallResult, type ContentType } from './functionExecutor';
 import { getBudgetCategories, getBudgetCategory, getAppSettings, type BudgetCategory } from './database';
 import { getPlanById } from '../data/plans';
@@ -23,21 +24,7 @@ export interface PendingTransaction {
 export interface AIResult {
   responseText: string;
   executedFunctions: FunctionCallResult[];
-  lesson?: {
-    id: string;
-    title: string;
-    body: string;
-    insight: string;
-    triggerType: string;
-    xpReward: number;
-    challengeTemplate: {
-      title: string;
-      description: string;
-      type: string;
-      duration_days: number;
-      xp_reward: number;
-    };
-  } | null;
+  lesson?: MicroLesson | null;
   xpEarned: number;
   contentType?: ContentType;
   pendingTransaction?: PendingTransaction | null;
@@ -96,7 +83,7 @@ class GemmaAIService {
    */
   async parseUserInput(userText: string): Promise<AIResult> {
     // 1. Conversation context intercept (multi-step flows)
-    const contextResult = conversationContext.intercept(userText);
+    const contextResult = await conversationContext.intercept(userText);
     if (contextResult.handled) {
       return this.contextResultToAIResult(contextResult);
     }
@@ -122,42 +109,63 @@ class GemmaAIService {
    * Returns null if no match (passes through to Gemma).
    */
   private async deterministicRoute(lower: string, original: string): Promise<AIResult | null> {
-    // Adjust budget (must check before generic "budget" match)
-    const adjustKeywords = ['adjust', 'change limit', 'increase', 'decrease', 'raise', 'lower'];
-    if (adjustKeywords.some((kw) => lower.includes(kw))) {
-      const cats = await getBudgetCategories();
-      let matchedCat = cats.find((c) => lower.includes(c.name.toLowerCase()) || lower.includes(c.id.toLowerCase()));
+    const categories = await getBudgetCategories();
+    const matchedCategory = this.findMatchedCategory(lower, categories);
+    const amountMatch = original.match(/(\d+(?:\.\d{1,2})?)/);
+    const parsedAmount = amountMatch ? parseFloat(amountMatch[1]) : undefined;
 
-      // Fall back to last referenced category for follow-ups like "increase by 5"
-      if (!matchedCat && this.lastCategoryId) {
-        matchedCat = cats.find((c) => c.id === this.lastCategoryId) ?? undefined;
+    const hasBudgetAdjustIntent = [
+      /\badjust\b/,
+      /change limit/,
+      /\bincrease\b/,
+      /\bdecrease\b/,
+      /\braise\b/,
+      /\blower\b/,
+      /\breduce\b/,
+      /\bedit\b/,
+      /\bset\b/,
+      /\bmake\b/,
+    ].some((pattern) => pattern.test(lower));
+    if (hasBudgetAdjustIntent) {
+      let targetCategory = matchedCategory;
+
+      if (!targetCategory && this.lastCategoryId) {
+        targetCategory = categories.find((category) => category.id === this.lastCategoryId) ?? undefined;
       }
 
-      if (matchedCat) {
-        this.lastCategoryId = matchedCat.id;
-        const direction = lower.includes('increase') || lower.includes('raise') || lower.includes('more')
-          ? 'increase'
-          : lower.includes('decrease') || lower.includes('lower') || lower.includes('less') || lower.includes('reduce')
-            ? 'decrease'
-            : undefined;
-        const amountMatch = original.match(/(?:by\s+)?(\d+(?:\.\d{1,2})?)/);
-        const args: Record<string, unknown> = { category: matchedCat.id };
+      if (!targetCategory) {
+        return {
+          responseText: 'Which category? Say "increase food by 5" or "set coffee to 20".',
+          executedFunctions: [],
+          lesson: null,
+          xpEarned: 0,
+        };
+      }
+
+      const direction = lower.includes('increase') || lower.includes('raise') || lower.includes('more')
+        ? 'increase'
+        : lower.includes('decrease') || lower.includes('lower') || lower.includes('less') || lower.includes('reduce')
+          ? 'decrease'
+          : undefined;
+
+      const args: Record<string, unknown> = { category: targetCategory.id };
+      if ((lower.includes('set') || lower.includes('make')) && parsedAmount !== undefined) {
+        args.target_amount = parsedAmount;
+      } else {
         if (direction) args.direction = direction;
-        if (amountMatch) args.amount = parseFloat(amountMatch[1]);
-
-        return this.executeDeterministic('adjust_budget_limit', args);
+        if (parsedAmount !== undefined) args.amount = parsedAmount;
       }
+
+      return this.executeDeterministic('adjust_budget_limit', args);
     }
 
-    // Category detail (must check before generic "budget")
-    const categoryDetailKeywords = ['tell me about', 'details for', 'how much', 'about my'];
-    if (categoryDetailKeywords.some((kw) => lower.includes(kw))) {
-      const cats = await getBudgetCategories();
-      const matchedCat = cats.find((c) => lower.includes(c.name.toLowerCase()) || lower.includes(c.id.toLowerCase()));
-      if (matchedCat) {
-        this.lastCategoryId = matchedCat.id;
-        return this.executeDeterministic('get_category_detail', { category: matchedCat.id });
-      }
+    const categoryDetailKeywords = ['tell me about', 'details for', 'how much', 'about my', 'check', 'show', 'budget for'];
+    const wantsCategoryBudget = Boolean(matchedCategory) && (
+      categoryDetailKeywords.some((kw) => lower.includes(kw)) ||
+      (lower.includes('budget') && !lower.includes("how's my budget") && !lower.includes('show my budget') && !lower.includes('overall'))
+    );
+    if (matchedCategory && wantsCategoryBudget) {
+      return this.executeDeterministic('get_category_detail', { category: matchedCategory.id });
     }
 
     // Static intent routes — order: specific phrases before generic words
@@ -194,6 +202,14 @@ class GemmaAIService {
    */
   private async executeDeterministic(fn: string, args: Record<string, unknown>): Promise<AIResult> {
     const fnResult = await executeFunctionCall({ name: fn, arguments: args });
+    const categoryArg = typeof args.category === 'string' ? args.category : null;
+    if (fnResult.success) {
+      if (fn === 'get_budget_overview') {
+        this.lastCategoryId = null;
+      } else if (categoryArg && ['get_category_detail', 'adjust_budget_limit', 'check_budget_status'].includes(fn)) {
+        this.lastCategoryId = categoryArg;
+      }
+    }
     return {
       responseText: fnResult.responseText || '',
       executedFunctions: [fnResult],
@@ -290,6 +306,17 @@ ${budgetContext}`,
             name: call.name,
             arguments: call.arguments as Record<string, unknown>,
           });
+          const categoryArg = (call.arguments as Record<string, unknown>).category;
+          if (fnResult.success) {
+            if (call.name === 'get_budget_overview') {
+              this.lastCategoryId = null;
+            } else if (
+              typeof categoryArg === 'string' &&
+              ['check_budget_status', 'get_category_detail', 'adjust_budget_limit'].includes(call.name)
+            ) {
+              this.lastCategoryId = categoryArg;
+            }
+          }
           executedFunctions.push(fnResult);
           totalXP += fnResult.xpEarned;
           if (fnResult.responseText) responseText = fnResult.responseText;
@@ -388,10 +415,18 @@ ${budgetContext}`,
       lesson: null,
       xpEarned: ctx.xpEarned || 0,
       contentType: ctx.contentType,
-      pendingTransaction: ctx.executeTransaction || null,
+      pendingTransaction: ctx.executeTransaction ?? (ctx.contentType === 'confirmation' ? (ctx.data as PendingTransaction) : null),
       game: ctx.gameState?.type || null,
       lessonAction: ctx.lessonAction,
     };
+  }
+
+  private findMatchedCategory(lowerText: string, categories: BudgetCategory[]): BudgetCategory | undefined {
+    return categories.find(
+      (category) =>
+        lowerText.includes(category.name.toLowerCase()) ||
+        lowerText.includes(category.id.toLowerCase())
+    );
   }
 
   private buildBudgetContext(categories: BudgetCategory[]): string {

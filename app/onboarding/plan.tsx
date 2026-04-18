@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback } from 'react';
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -29,6 +29,10 @@ export default function PlanScreen() {
     data.selectedPlanId || recommendedId,
   );
   const autoContinueTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (autoContinueTimer.current) clearTimeout(autoContinueTimer.current);
+  }, []);
 
   const handleSelect = useCallback((plan: FinancialPlan) => {
     setSelectedId(plan.id);
@@ -228,7 +232,7 @@ export default function PlanScreen() {
                           },
                         ]}
                       >
-                        {cat.icon} {cat.name.padEnd(16)} {String(cat.weeklyLimitPercent).padStart(3)}%
+                        {`[${cat.icon.padEnd(4).slice(0, 4)}] ${cat.name.padEnd(12).slice(0, 12)} ${String(cat.weeklyLimitPercent).padStart(3)}%`}
                       </Text>
                     ))}
                   </View>

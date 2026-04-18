@@ -13,7 +13,7 @@ export default function AIResponse({ text, visible }: AIResponseProps) {
   return (
     <Animated.View entering={FadeIn.duration(300)} style={styles.container}>
       <View style={styles.avatarContainer}>
-        <Text style={styles.avatar}>🤖</Text>
+        <Text style={styles.avatar}>AI</Text>
       </View>
       <View style={styles.bubble}>
         <Text style={styles.text}>{text}</Text>
@@ -39,7 +39,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   avatar: {
-    fontSize: 16,
+    fontSize: FontSize.xs,
+    fontWeight: '700',
+    color: Colors.text,
+    letterSpacing: 0.6,
   },
   bubble: {
     flex: 1,

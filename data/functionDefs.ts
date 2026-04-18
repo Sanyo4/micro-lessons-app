@@ -99,7 +99,7 @@ export function getUserFacingFunctions(categoryIds: string[]): FunctionDefinitio
     },
     {
       name: 'adjust_budget_limit',
-      description: 'Increase or decrease the weekly budget limit for a category. Use when the user wants to change, adjust, raise, lower, increase, or decrease their budget limit.',
+      description: 'Increase, decrease, or set the weekly budget limit for a category. Use when the user wants to change, adjust, raise, lower, increase, decrease, or set their budget limit.',
       parameters: {
         type: 'object',
         properties: {
@@ -116,6 +116,10 @@ export function getUserFacingFunctions(categoryIds: string[]): FunctionDefinitio
           amount: {
             type: 'number',
             description: 'Amount to adjust by in GBP (defaults to 5 if not specified)',
+          },
+          target_amount: {
+            type: 'number',
+            description: 'Exact weekly budget limit to set in GBP when the user says things like "set food to 40"',
           },
         },
         required: ['category'],
