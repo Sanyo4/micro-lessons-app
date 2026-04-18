@@ -51,8 +51,14 @@ export default function VoiceIncomeScreen() {
 
     if (parsed && parsed > 0) {
       setAmount(parsed);
+      updateData({ monthlyIncome: parsed });
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      speakAndAutoMic(`Got it. £${Math.round(parsed)} per month.`);
+      Speech.stop();
+      Speech.speak(`Got it. £${Math.round(parsed)} per month. Moving on.`, {
+        rate: 0.95,
+        onDone: () => router.push('/onboarding/voice-bills'),
+        onStopped: () => {}, // user interrupted (shake/tap) — stay so they can re-speak
+      });
     } else {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       speakAndAutoMic("I didn't catch an amount. Try saying a number like 2000.");

@@ -132,6 +132,10 @@ export default function HomeScreen() {
 
         setCurrentLesson(lesson);
         setShowLesson(true);
+        // Unmount the SpeechBubble so any in-flight typewriter TTS can't fire
+        // after speakQuestOffer starts (the autoSpeakRef update can lag a tick
+        // behind showLesson, leaving a race window).
+        setDialogue('');
         conversationContext.startLessonOffer();
         announceForScreenReader(`New quest. ${lesson.challengeTemplate.title}.`);
         speakQuestOffer(lesson, handleTTSDone);
@@ -187,8 +191,22 @@ export default function HomeScreen() {
       setIsModelReady(true);
     }
 
-    // Daily check-in with contextual hint
+    // Check time-based triggers FIRST. If a lesson is queued, skip the daily
+    // greeting entirely so its typewriter-completion TTS can't override the
+    // quest TTS (see SpeechBubble auto-speak race).
     (async () => {
+      let lessonQueued = false;
+      try {
+        const triggerResult = await aiService.checkTimeTriggers();
+        if (mounted && triggerResult?.lesson) {
+          lessonQueued = true;
+          presentLessonOffer(triggerResult.lesson, 1500);
+        }
+      } catch {}
+
+      if (lessonQueued || !mounted) return;
+
+      // No quest coming — show the contextual daily greeting
       try {
         const state = await getCurrentPetState();
         const reaction = getDailyCheckInReaction(state);
@@ -215,13 +233,6 @@ export default function HomeScreen() {
         if (mounted) setDialogue(text);
       } catch {}
     })();
-
-    // Check time-based triggers
-    aiService.checkTimeTriggers().then((result) => {
-      if (mounted && result?.lesson) {
-        presentLessonOffer(result.lesson, 1500);
-      }
-    }).catch(() => {});
 
     // Check evolution
     checkEvolution().catch(() => {});

@@ -58,8 +58,14 @@ export default function VoiceFlexibleScreen() {
 
     if (parsed && parsed > 0) {
       setAmount(parsed);
+      updateData({ flexibleSpending: parsed });
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      speakAndAutoMic(`Got it. £${Math.round(parsed)} for flexible spending.`);
+      Speech.stop();
+      Speech.speak(`Got it. £${Math.round(parsed)} for flexible spending. Moving on.`, {
+        rate: 0.95,
+        onDone: () => router.push('/onboarding/persona'),
+        onStopped: () => {}, // user interrupted (shake/tap) — stay so they can re-speak
+      });
     } else {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       speakAndAutoMic('Say an amount, like 500.');
