@@ -157,12 +157,16 @@ export function speakQuestOffer(
   onDone?: () => void,
 ): void {
   const template = lesson.challengeTemplate;
+  // Lead with the lesson title + insight — those are unique per lesson, so
+  // different quests sound distinct even in the first few seconds. The
+  // challenge title/description is templated ("Make X for Y days...") and was
+  // making every quest sound the same.
   const message = [
     'New quest.',
-    `${template.title}.`,
-    template.description,
-    lesson.insight ? `Why it matters: ${lesson.insight}.` : '',
-    `Reward ${template.xp_reward} care points.`,
+    `${lesson.title}.`,
+    lesson.insight ? `${lesson.insight}.` : '',
+    `Challenge: ${template.title}.`,
+    `${template.duration_days} day${template.duration_days === 1 ? '' : 's'} for ${template.xp_reward} care points.`,
     'Say accept quest to start, or say maybe later to skip.',
   ]
     .filter(Boolean)
